@@ -1,0 +1,17 @@
+{
+  "name": "finance-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hệ thống quản lý tài chính cá nhân: ví, thu chi, hũ tiền, tiết kiệm, chat AI",
+  "scripts": {
+    "setup": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently -n api,web -c blue,green \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "seed:demo": "npm --prefix server run seed:demo",
+    "test": "npm --prefix server test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
