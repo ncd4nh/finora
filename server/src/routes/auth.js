@@ -14,10 +14,10 @@ r.post('/reset', h((req) => auth.resetPassword(req.body)));
 r.get('/me', auth.requireAuth, h((req) => auth.publicUser(req.user)));
 r.put('/me', auth.requireAuth, h((req) => auth.updateProfile(req.user, req.body)));
 r.post('/me/password', auth.requireAuth, h((req) => auth.changePassword(req.user, req.body)));
-r.post('/logout', auth.requireAuth, h((req) => { auth.logout(req.user); return { ok: true }; }));
+r.post('/logout', auth.requireAuth, h(async (req) => { await auth.logout(req.user); return { ok: true }; }));
 r.get('/sessions', auth.requireAuth, h((req) => auth.listSessions(req.user)));
 r.delete('/sessions/:id', auth.requireAuth, h((req) => auth.revokeSession(req.user, req.params.id)));
 r.post('/sessions/logout-others', auth.requireAuth, h((req) => auth.revokeOtherSessions(req.user)));
-r.delete('/me', auth.requireAuth, h((req) => { auth.deleteAccount(req.user); return { ok: true }; }));
+r.delete('/me', auth.requireAuth, h(async (req) => { await auth.deleteAccount(req.user); return { ok: true }; }));
 
 export default r;

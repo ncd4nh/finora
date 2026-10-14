@@ -1,72 +1,70 @@
 // Hũ tiền: kỳ lương, phân bổ, theo dõi tốc độ chi & cảnh báo
-import { db, tx, getSettings } from '../db.js';
+import { db, tx, batch, getSettings } from '../db.js';
 import { getPeriod, today, daysBetween, round, fmtVND } from '../utils.js';
-import { HttpError } from './finance.js';
+import { HttpError, ownedId } from './finance.js';
 
-export function listJars({ includeArchived = false } = {}) {
+export async function listJars({ includeArchived = false } = {}) {
   return db
-    .prepare(`SELECT * FROM jars ${includeArchived ? '' : 'WHERE archived = 0'} ORDER BY sort_order, id`)
+    .prepare(`SELECT * FROM jars WHERE user_id = @uid ${includeArchived ? '' : 'AND archived = 0'} ORDER BY sort_order, id`)
     .all();
 }
 
-export function findPeriodByDate(iso) {
-  return db.prepare('SELECT * FROM jar_periods WHERE ? BETWEEN start_date AND end_date').get(iso);
+export async function findPeriodByDate(iso) {
+  return db.prepare('SELECT * FROM jar_periods WHERE user_id = @uid AND ? BETWEEN start_date AND end_date ORDER BY start_date DESC').get(iso);
 }
 
 /** Kỳ hiện tại (đã tạo hoặc "ảo" nếu chưa chia lương) */
-export function currentPeriodRange(iso = today()) {
-  const p = findPeriodByDate(iso);
+export async function currentPeriodRange(iso = today()) {
+  const p = await findPeriodByDate(iso);
   if (p) return { start: p.start_date, end: p.end_date, period: p };
-  const r = getPeriod(iso, getSettings().salary_day);
+  const r = getPeriod(iso, (await getSettings()).salary_day);
   return { ...r, period: null };
 }
 
 /** Thu nhập phát sinh trong kỳ (gợi ý số tiền để chia) */
-export function incomeInRange(start, end) {
-  return db
-    .prepare("SELECT COALESCE(SUM(amount_base),0) s FROM transactions WHERE type='income' AND date BETWEEN ? AND ?")
-    .get(start, end).s;
+export async function incomeInRange(start, end) {
+  return (await db
+    .prepare("SELECT COALESCE(SUM(amount_base),0) s FROM transactions WHERE user_id = @uid AND type='income' AND date BETWEEN ? AND ?")
+    .get(start, end)).s;
 }
 
 /**
  * Tạo / cập nhật kỳ chia hũ.
  * body: { date?, start_date?, income_amount, allocations?: [{jar_id, percent?, amount?}] }
  */
-export const upsertPeriod = tx((body) => {
-  const salaryDay = getSettings().salary_day;
+export const upsertPeriod = tx(async (body) => {
+  const salaryDay = (await getSettings()).salary_day;
   const range = getPeriod(body.start_date || body.date || today(), salaryDay);
   const start = body.start_date || range.start;
   const end = body.end_date || range.end;
   const income = Number(body.income_amount);
   if (!(income > 0)) throw new HttpError(400, 'Số tiền chia hũ phải > 0');
 
-  let period = db.prepare('SELECT * FROM jar_periods WHERE start_date = ?').get(start);
+  let period = await db.prepare('SELECT * FROM jar_periods WHERE user_id = @uid AND start_date = ?').get(start);
   if (period) {
-    db.prepare('UPDATE jar_periods SET income_amount = ?, end_date = ?, note = ? WHERE id = ?').run(
+    await db.prepare('UPDATE jar_periods SET income_amount = ?, end_date = ?, note = ? WHERE user_id = @uid AND id = ?').run(
       income,
       end,
       body.note ?? period.note,
       period.id
     );
   } else {
-    const id = db
-      .prepare('INSERT INTO jar_periods(start_date, end_date, income_amount, note) VALUES (?,?,?,?)')
-      .run(start, end, income, body.note || null).lastInsertRowid;
+    const { lastInsertRowid: id } = await db
+      .prepare('INSERT INTO jar_periods(user_id, start_date, end_date, income_amount, note) VALUES (@uid,?,?,?,?)')
+      .run(start, end, income, body.note || null);
     period = { id };
   }
-  setAllocations(period.id, income, body.allocations);
+  await setAllocations(period.id, income, body.allocations);
   return periodStatus(period.id);
 });
 
 /** Ghi phân bổ cho kỳ. Không truyền allocations -> dùng % mặc định của từng hũ */
-export function setAllocations(periodId, income, allocations) {
-  const jars = listJars();
+export async function setAllocations(periodId, income, allocations) {
+  const jars = await listJars();
   const byJar = new Map((allocations || []).map((a) => [Number(a.jar_id), a]));
-  const up = db.prepare(
-    `INSERT INTO jar_allocations(period_id, jar_id, percent, amount) VALUES (?,?,?,?)
-     ON CONFLICT(period_id, jar_id) DO UPDATE SET percent = excluded.percent, amount = excluded.amount`
-  );
-  db.prepare('DELETE FROM jar_allocations WHERE period_id = ?').run(periodId);
+  const UP = `INSERT INTO jar_allocations(user_id, period_id, jar_id, percent, amount) VALUES (@uid,?,?,?,?)
+     ON CONFLICT(period_id, jar_id) DO UPDATE SET percent = excluded.percent, amount = excluded.amount`;
+  const stmts = [['DELETE FROM jar_allocations WHERE user_id = @uid AND period_id = ?', [periodId]]];
   for (const j of jars) {
     const a = byJar.get(j.id);
     let percent = j.percent;
@@ -80,26 +78,31 @@ export function setAllocations(periodId, income, allocations) {
         amount = (income * percent) / 100;
       }
     }
-    up.run(periodId, j.id, round(percent, 2), round(amount));
+    stmts.push([UP, [periodId, j.id, round(percent, 2), round(amount)]]);
   }
+  await batch(stmts);
 }
 
-export const updateAllocations = tx((periodId, { income_amount, allocations }) => {
-  const p = db.prepare('SELECT * FROM jar_periods WHERE id = ?').get(periodId);
+export const updateAllocations = tx(async (periodId, { income_amount, allocations }) => {
+  const p = await db.prepare('SELECT * FROM jar_periods WHERE user_id = @uid AND id = ?').get(Number(periodId) || 0);
   if (!p) throw new HttpError(404, 'Không tìm thấy kỳ');
   const income = income_amount != null ? Number(income_amount) : p.income_amount;
-  db.prepare('UPDATE jar_periods SET income_amount = ? WHERE id = ?').run(income, p.id);
-  setAllocations(p.id, income, allocations);
+  await db.prepare('UPDATE jar_periods SET income_amount = ? WHERE user_id = @uid AND id = ?').run(income, p.id);
+  await setAllocations(p.id, income, allocations);
   return periodStatus(p.id);
 });
 
-export function transferBetweenJars(periodId, { from_jar_id, to_jar_id, amount, note }) {
+export async function transferBetweenJars(periodId, { from_jar_id, to_jar_id, amount, note }) {
   if (Number(from_jar_id) === Number(to_jar_id)) throw new HttpError(400, 'Hai hũ phải khác nhau');
   if (!(Number(amount) > 0)) throw new HttpError(400, 'Số tiền phải > 0');
-  db.prepare('INSERT INTO jar_transfers(period_id, from_jar_id, to_jar_id, amount, note) VALUES (?,?,?,?,?)').run(
-    periodId,
-    from_jar_id,
-    to_jar_id,
+  const period = await ownedId('jar_periods', periodId);
+  const from = await ownedId('jars', from_jar_id);
+  const to = await ownedId('jars', to_jar_id);
+  if (!period || !from || !to) throw new HttpError(400, 'Thiếu kỳ hoặc hũ');
+  await db.prepare('INSERT INTO jar_transfers(user_id, period_id, from_jar_id, to_jar_id, amount, note) VALUES (@uid,?,?,?,?,?)').run(
+    period,
+    from,
+    to,
     Number(amount),
     note || null
   );
@@ -110,10 +113,10 @@ export function transferBetweenJars(periodId, { from_jar_id, to_jar_id, amount, 
  * Tình trạng từng hũ trong kỳ + cảnh báo.
  * Logic cảnh báo: so % đã chi của hũ với % thời gian đã trôi qua trong kỳ.
  */
-export function periodStatus(periodId, onDate = today()) {
-  const p = db.prepare('SELECT * FROM jar_periods WHERE id = ?').get(periodId);
+export async function periodStatus(periodId, onDate = today()) {
+  const p = await db.prepare('SELECT * FROM jar_periods WHERE user_id = @uid AND id = ?').get(Number(periodId) || 0);
   if (!p) throw new HttpError(404, 'Không tìm thấy kỳ');
-  const { overspend_tolerance: tol } = getSettings();
+  const { overspend_tolerance: tol } = await getSettings();
 
   const totalDays = daysBetween(p.start_date, p.end_date) + 1;
   const ref = onDate < p.start_date ? p.start_date : onDate > p.end_date ? p.end_date : onDate;
@@ -122,21 +125,19 @@ export function periodStatus(periodId, onDate = today()) {
   const daysLeft = onDate > p.end_date ? 0 : Math.max(0, totalDays - elapsedDays + 1);
   const timeRatio = elapsedDays / totalDays;
 
-  const allocs = db
-    .prepare(
+  const [allocs, spentRows, trs] = await Promise.all([
+    db.prepare(
       `SELECT j.*, COALESCE(a.amount,0) allocated, COALESCE(a.percent,0) alloc_percent
-       FROM jars j LEFT JOIN jar_allocations a ON a.jar_id = j.id AND a.period_id = ?
-       WHERE j.archived = 0 ORDER BY j.sort_order, j.id`
-    )
-    .all(p.id);
-  const spentRows = db
-    .prepare(
+       FROM jars j LEFT JOIN jar_allocations a ON a.jar_id = j.id AND a.period_id = ? AND a.user_id = @uid
+       WHERE j.user_id = @uid AND j.archived = 0 ORDER BY j.sort_order, j.id`
+    ).all(p.id),
+    db.prepare(
       `SELECT jar_id, SUM(amount_base) s FROM transactions
-       WHERE type='expense' AND date BETWEEN ? AND ? GROUP BY jar_id`
-    )
-    .all(p.start_date, ref);
+       WHERE user_id = @uid AND type='expense' AND date BETWEEN ? AND ? GROUP BY jar_id`
+    ).all(p.start_date, ref),
+    db.prepare('SELECT * FROM jar_transfers WHERE user_id = @uid AND period_id = ?').all(p.id),
+  ]);
   const spentBy = new Map(spentRows.map((r) => [r.jar_id, r.s]));
-  const trs = db.prepare('SELECT * FROM jar_transfers WHERE period_id = ?').all(p.id);
 
   const jars = allocs.map((j) => {
     const tin = trs.filter((t) => t.to_jar_id === j.id).reduce((s, t) => s + t.amount, 0);
@@ -251,15 +252,15 @@ function buildAlerts(jars, { timeRatio, daysLeft }) {
 }
 
 /** Trạng thái kỳ hiện tại (null nếu chưa chia lương kỳ này) */
-export function currentStatus(iso = today()) {
-  const p = findPeriodByDate(iso);
+export async function currentStatus(iso = today()) {
+  const p = await findPeriodByDate(iso);
   return p ? periodStatus(p.id, iso) : null;
 }
 
 /** Chi tiêu trung bình mỗi kỳ theo hũ (dựa trên N kỳ gần nhất, hoặc 90 ngày gần nhất) */
-export function averageSpendByJar(iso = today()) {
-  const past = db
-    .prepare('SELECT * FROM jar_periods WHERE end_date < ? ORDER BY start_date DESC LIMIT 3')
+export async function averageSpendByJar(iso = today()) {
+  const past = await db
+    .prepare('SELECT * FROM jar_periods WHERE user_id = @uid AND end_date < ? ORDER BY start_date DESC LIMIT 3')
     .all(iso);
   let from, months;
   if (past.length) {
@@ -272,13 +273,14 @@ export function averageSpendByJar(iso = today()) {
     months = 3;
   }
   const to = past.length ? past[0].end_date : iso;
-  const rows = db
-    .prepare(
+  const [rows, first] = await Promise.all([
+    db.prepare(
       `SELECT jar_id, SUM(amount_base) s FROM transactions
-       WHERE type='expense' AND date BETWEEN ? AND ? GROUP BY jar_id`
-    )
-    .all(from, to);
-  const firstTx = db.prepare("SELECT MIN(date) d FROM transactions WHERE type='expense'").get().d;
+       WHERE user_id = @uid AND type='expense' AND date BETWEEN ? AND ? GROUP BY jar_id`
+    ).all(from, to),
+    db.prepare("SELECT MIN(date) d FROM transactions WHERE user_id = @uid AND type='expense'").get(),
+  ]);
+  const firstTx = first.d;
   if (firstTx && firstTx > from) months = Math.max(1, daysBetween(firstTx, to) / 30.4);
   return Object.fromEntries(rows.map((r) => [r.jar_id ?? 'none', round(r.s / months)]));
 }

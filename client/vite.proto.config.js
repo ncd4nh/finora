@@ -15,7 +15,7 @@ export default defineConfig({
       { find: /^react-dom\/client$/, replacement: ext('react-dom-client.js') },
       { find: /^react-dom$/, replacement: ext('react-dom.js') },
       { find: /^recharts$/, replacement: ext('recharts.js') },
-      { find: /^better-sqlite3$/, replacement: ext('sqlite.js') },
+      { find: /^@libsql\/client(\/web)?$/, replacement: ext('libsql.js') },
       { find: /^express$/, replacement: ext('express.js') },
       { find: /^@anthropic-ai\/sdk$/, replacement: ext('anthropic.js') },
       { find: /^node:(fs|path)$/, replacement: ext('node-stubs.js') },

@@ -20,7 +20,7 @@ const NAV = [
   ['/', '🏠', 'Tổng quan'],
   ['/hive', '🐝', 'Tổ ong'],
   ['/transactions', '🧾', 'Giao dịch'],
-  ['/chat', '💬', 'Chat AI'],
+  ['/chat', '💬', 'Trợ lý'],
   ['/jars', '🍯', 'Hũ tiền'],
   ['/savings', '🌸', 'Mục tiêu'],
   null, // vạch ngăn

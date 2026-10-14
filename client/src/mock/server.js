@@ -2,15 +2,15 @@
 import api from '../../../server/src/routes/api.js';
 import authRoutes from '../../../server/src/routes/auth.js';
 import { requireAuth, register } from '../../../server/src/services/auth.js';
-import { authDb } from '../../../server/src/db.js';
+import { db } from '../../../server/src/db.js';
 import { seedDemo } from '../../../server/src/demoData.js';
-import Database from 'better-sqlite3';
+import { resetMockDb } from '@libsql/client';
 
 const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
 
 // Tài khoản dùng thử có sẵn dữ liệu mẫu
 const ready = (async () => {
-  if (!authDb.prepare('SELECT 1 FROM users WHERE email = ?').get('demo@finora.vn')) {
+  if (!(await db.prepare('SELECT 1 FROM users WHERE email = ?').get('demo@finora.vn'))) {
     await register({ name: 'Bạn Ong', email: 'demo@finora.vn', password: 'finora123', demo: true }, seedDemo);
   }
 })();
@@ -60,7 +60,7 @@ export async function handle(method, url, body, headers = {}) {
 }
 
 export function resetDemo() {
-  Database.reset();
+  resetMockDb();
   location.hash = '#/login';
   location.reload();
 }

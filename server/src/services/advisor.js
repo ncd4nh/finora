@@ -38,39 +38,42 @@ export function readRequest(message) {
 }
 
 /** Bối cảnh tài chính hiện tại cho tư vấn. Kỳ sắp hết (<= 3 ngày) -> tư vấn cho kỳ kế tiếp */
-export function buildContext(onDate = today()) {
-  const jars = listJars();
-  const salaryDay = getSettings().salary_day;
-  let range = currentPeriodRange(onDate);
-  let p = findPeriodByDate(onDate);
+export async function buildContext(onDate = today()) {
+  const [jars, settings, range0, p0] = await Promise.all([
+    listJars(), getSettings(), currentPeriodRange(onDate), findPeriodByDate(onDate),
+  ]);
+  const salaryDay = settings.salary_day;
+  let range = range0;
+  let p = p0;
   let nextPeriod = false;
   if (daysBetween(onDate, range.end) + 1 <= 3) {
     nextPeriod = true;
     const nx = getPeriod(addDays(range.end, 1), salaryDay);
-    p = findPeriodByDate(nx.start);
+    p = await findPeriodByDate(nx.start);
     range = { start: nx.start, end: nx.end };
   }
   const ref = nextPeriod ? range.start : onDate;
-  const status = p ? periodStatus(p.id, ref) : null;
+  const status = p ? await periodStatus(p.id, ref) : null;
   const totalDays = daysBetween(range.start, range.end) + 1;
   const daysLeft = nextPeriod ? totalDays : Math.max(1, daysBetween(onDate, range.end) + 1);
-  const avg = averageSpendByJar(onDate);
-  const goals = listGoals({ status: 'active' });
-  const lastPeriod = db.prepare('SELECT income_amount FROM jar_periods WHERE start_date < ? ORDER BY start_date DESC LIMIT 1').get(range.start);
-  const avgIncome = db
-    .prepare(
-      "SELECT COALESCE(SUM(amount_base),0)/3.0 s FROM transactions WHERE type='income' AND date >= date(?, '-90 day') AND date < ?"
-    )
-    .get(range.start, range.start).s;
-  const contributedBy = new Map(
-    db.prepare('SELECT goal_id, SUM(amount) s FROM savings_contributions WHERE date BETWEEN ? AND ? GROUP BY goal_id')
-      .all(range.start, range.end).map((r) => [r.goal_id, r.s])
-  );
+  const [avg, goals, lastPeriod, avgIncomeRow, contribRows, incomeNow] = await Promise.all([
+    averageSpendByJar(onDate),
+    listGoals({ status: 'active' }),
+    db.prepare('SELECT income_amount FROM jar_periods WHERE user_id = @uid AND start_date < ? ORDER BY start_date DESC LIMIT 1').get(range.start),
+    db.prepare(
+      "SELECT COALESCE(SUM(amount_base),0)/3.0 s FROM transactions WHERE user_id = @uid AND type='income' AND date >= date(?, '-90 day') AND date < ?"
+    ).get(range.start, range.start),
+    db.prepare('SELECT goal_id, SUM(amount) s FROM savings_contributions WHERE user_id = @uid AND date BETWEEN ? AND ? GROUP BY goal_id')
+      .all(range.start, range.end),
+    incomeInRange(range.start, range.end),
+  ]);
+  const avgIncome = avgIncomeRow.s;
+  const contributedBy = new Map(contribRows.map((r) => [r.goal_id, r.s]));
   return {
     date: onDate,
     next_period: nextPeriod,
     period: { start: range.start, end: range.end, total_days: totalDays, days_left: daysLeft, created: !!p },
-    income: status?.income || incomeInRange(range.start, range.end) || lastPeriod?.income_amount || round(avgIncome),
+    income: status?.income || incomeNow || lastPeriod?.income_amount || round(avgIncome),
     jars: jars.map((j) => {
       const s = status?.jars.find((x) => x.jar_id === j.id);
       return {
@@ -99,7 +102,7 @@ export function buildContext(onDate = today()) {
 }
 
 /** Tính phân bổ phần tiền còn lại của kỳ theo quy tắc */
-export function ruleAdvice(message, ctx = buildContext()) {
+export function ruleAdvice(message, ctx) {
   const req = readRequest(message);
   const income = req.income || ctx.income;
   const spentTotal = ctx.jars.reduce((s, j) => s + j.spent, 0) + ctx.unassigned_spent;
@@ -134,10 +137,15 @@ export function ruleAdvice(message, ctx = buildContext()) {
 
   // 2. Chi tiêu thiết yếu dự kiến cho phần còn lại của kỳ
   const nec = byCode('NEC') || ctx.jars.find((j) => !j.is_saving);
-  const pace = nec.spent > 0 && rf < 1 ? (nec.spent / (1 - rf)) * rf : 0; // theo tốc độ đang chi
-  const hist = nec.avg_monthly_spend * rf;
-  const defaultNeed = (income * nec.default_percent) / 100 * rf;
-  const necNeed = roundUp(Math.max(pace, hist) || defaultNeed);
+  // Không ngoại suy khoản chi lớn đầu kỳ (VD tiền nhà) ra cả kỳ:
+  //  - theo lịch sử: phần còn thiếu so với mức chi bình quân/kỳ (tối thiểu 1/2 mức bình quân cho số ngày còn lại)
+  //  - theo tốc độ đang chi: chỉ dùng khi đã qua >= 30% kỳ, và không vượt 1,5 lần mức lịch sử
+  const elapsed = 1 - rf;
+  const remainOf = (full) => Math.max(full - nec.spent, full * rf * 0.5);
+  const hist = nec.avg_monthly_spend > 0 ? remainOf(nec.avg_monthly_spend) : 0;
+  const pace = nec.spent > 0 && elapsed >= 0.3 ? (nec.spent / elapsed) * rf : 0;
+  const defaultNeed = remainOf((income * nec.default_percent) / 100);
+  const necNeed = roundUp(hist ? Math.max(hist, Math.min(pace, hist * 1.5)) : pace || defaultNeed);
 
   let rest = available - saveTotal - necNeed;
   lines.push(`${ctx.next_period ? '📅 Kỳ hiện tại sắp kết thúc nên tính cho kỳ lương tới. ' : ''}Thu nhập kỳ ${ctx.period.start} → ${ctx.period.end}: **${fmtVND(income)}**, đã chi ${fmtVND(spentTotal)}, còn **${fmtVND(available)}** cho ${ctx.period.days_left} ngày.`);
@@ -165,7 +173,8 @@ export function ruleAdvice(message, ctx = buildContext()) {
       const capacity = income - necMonthly - otherGoals;
       if (capacity > 0) {
         const monthsNeeded = Math.ceil(req.target / (capacity * 0.8));
-        lines.push(`👉 Với thu nhập hiện tại, nên giãn mục tiêu ${fmtVND(req.target)} ra khoảng **${monthsNeeded} tháng** (≈ ${fmtVND(roundUp(req.target / monthsNeeded))}/tháng).`);
+        if (monthsNeeded <= req.months) lines.push(`👉 Chỉ thiếu ${fmtVND(-rest)}: có thể bớt chi tiêu kỳ này hoặc tạm giảm phần để dành cho mục tiêu dài hạn.`);
+        else lines.push(`👉 Với thu nhập hiện tại, nên giãn mục tiêu ${fmtVND(req.target)} ra khoảng **${monthsNeeded} tháng** (≈ ${fmtVND(roundUp(req.target / monthsNeeded))}/tháng).`);
       } else {
         lines.push('👉 Thu nhập hiện tại chưa đủ để vừa chi thiết yếu vừa nuôi các mục tiêu đang chạy. Cân nhắc giãn hạn hoặc tạm dừng bớt mục tiêu.');
       }
@@ -207,7 +216,7 @@ export function ruleAdvice(message, ctx = buildContext()) {
 
 /** Gợi ý cuối cùng: AI diễn giải dựa trên con số đã tính (AI không có -> trả về rule-based) */
 export async function advise(message, history = []) {
-  const ctx = buildContext();
+  const ctx = await buildContext();
   const base = ruleAdvice(message, ctx);
   if (!base.ok || !aiEnabled()) return { ...base, source: 'rules' };
   try {

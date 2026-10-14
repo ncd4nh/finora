@@ -2,7 +2,9 @@
 
 Web app quản lý thu chi gồm: Dashboard, Ví tiền, Danh mục thu/chi, Giao dịch, Mục tiêu tiết kiệm, Hũ tiền (chia lương theo %), Chat AI nhập nhanh & tư vấn chia hũ.
 
-**Công nghệ:** Node.js 18+ · Express · SQLite (better-sqlite3) · React 18 + Vite · Recharts · Claude API (tuỳ chọn).
+**Công nghệ:** Node.js 20+ · Express · libSQL/SQLite (Turso khi chạy online) · React 18 + Vite · Recharts · Claude API (tuỳ chọn).
+
+**Chạy online miễn phí:** Vercel (giao diện + API serverless) + Turso (database). Xem **[DEPLOY.md](DEPLOY.md)**.
 
 ## Chạy nhanh
 
@@ -21,8 +23,8 @@ Bản này chạy nguyên logic backend ngay trong trình duyệt (SQLite WebAss
 
 **Giao diện:** theme theo logo Finora (kem, xanh lá, cam, vàng mật), chế độ Sáng / Tối / Tự động. Trang **Tổ ong** báo cáo tiến độ: mỗi mục tiêu là 1 bông hoa, tiền để dành là mật, tổng tiến độ là tổ ong (API `/api/report/hive`). Có hiệu ứng chuyển trang, số chạy, thanh tiến độ, hộp thoại; tự tắt khi hệ điều hành bật "giảm chuyển động".
 
-Dữ liệu lưu trong `server/data/`: `auth.db` (tài khoản, phiên đăng nhập) và `users/<id>.db` (dữ liệu riêng của từng người). Sao lưu bằng cách copy thư mục này.
-Nếu đang có `data/finance.db` từ bản cũ, tài khoản đầu tiên đăng ký sẽ nhận lại toàn bộ dữ liệu đó.
+**Dữ liệu:** 1 database duy nhất. Trên máy: file `server/data/finora.db` (không cần cài gì). Online: Turso, đặt `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`.
+Mọi bảng có cột `user_id`; câu SQL chạm vào dữ liệu cá nhân mà thiếu lọc người dùng sẽ bị chặn ngay trong code (có test kiểm tra người này không đọc/sửa được dữ liệu người khác).
 
 ## Tài khoản
 
@@ -42,12 +44,18 @@ Nếu đang có `data/finance.db` từ bản cũ, tài khoản đầu tiên đă
 
 ## Deploy
 
-Xem hướng dẫn tạo repo GitHub và deploy (Vercel + Railway) trong **[DEPLOY.md](DEPLOY.md)**.
+Xem hướng dẫn tạo repo GitHub và deploy miễn phí (Vercel + Turso) trong **[DEPLOY.md](DEPLOY.md)**.
 
-## Chat AI
+## Trợ lý chat (không cần AI)
 
-- **Không cần API key**: chat vẫn hiểu công thức và câu đơn giản, tư vấn chia hũ bằng thuật toán quy tắc.
-- **Có API key** (điền `ANTHROPIC_API_KEY` trong `server/.env`): Claude hiểu câu tự nhiên phức tạp → chuyển thành công thức, và diễn giải/tinh chỉnh gợi ý chia hũ. Đổi model ở `ANTHROPIC_MODEL`.
+Chat tự xử lý câu ngắn ngay trên máy chủ (`server/src/services/assistant.js` + `parser.js`), không tốn token:
+
+- **Ghi thu chi**: không cần chữ "Chi/Thu": `cafe 25k`, `ăn trưa 45k momo`, `lương 15tr bidv`. Không rõ ví → ví mặc định; không rõ thu hay chi → hiểu là chi.
+- **Chuyển / rút / nạp**: `chuyển 2tr tcb bidv`, `rút 500k bidv` (về tiền mặt), `nạp 200k momo từ techcombank`.
+- **Hỏi số liệu**: `hôm nay chi bao nhiêu`, `tháng trước ăn uống hết bao nhiêu`, `7 ngày qua chi bao nhiêu`, `số dư BIDV`, `5 giao dịch gần nhất`, `tháng này tiêu nhiều nhất vào gì`.
+- **Hũ & mục tiêu**: `tình hình hũ`, `hũ hưởng thụ còn bao nhiêu`, `máy ảnh còn thiếu bao nhiêu`.
+- **Tư vấn chia hũ** (tính theo quy tắc): `chia lương 20tr`, `tháng này cần tiết kiệm 5tr mua khoá học, nên chia thế nào?`
+- **Tuỳ chọn**: điền `ANTHROPIC_API_KEY` thì Claude chỉ được gọi khi quy tắc không hiểu câu.
 
 | Bạn gõ | Hệ thống hiểu |
 |---|---|
@@ -73,8 +81,12 @@ Nhận diện ví/khoản dựa trên tên + **"tên gọi tắt"** (khai báo �
 ## Cấu trúc
 
 ```
+api/index.js            # Vercel Serverless Function (dùng lại server/src/app.js)
+vercel.json             # cấu hình build + chuyển /api/* vào function
 server/src/
-  db.js                 # schema SQLite + dữ liệu mặc định
+  app.js                # ứng dụng Express
+  index.js              # chạy như máy chủ thường (npm start)
+  db.js                 # kết nối libSQL/Turso, schema, dữ liệu mặc định
   utils.js              # kỳ lương, đọc số tiền, bỏ dấu
   services/finance.js   # ví, giao dịch, tiết kiệm
   services/jars.js      # hũ tiền, kỳ lương, cảnh báo

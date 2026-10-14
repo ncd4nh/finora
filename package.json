@@ -13,5 +13,9 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
   }
 }

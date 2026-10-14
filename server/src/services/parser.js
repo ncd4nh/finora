@@ -8,7 +8,7 @@ import { normalize, AMOUNT_RE, parseAmountMatch, today, addDays, pad } from '../
 
 const EXPENSE_WORDS = ['mua', 'tra tien', 'het', 'ton', 'mat', 'dong tien', 'dong', 'nap', 'an', 'uong', 'thanh toan', 'tieu', 'chi'];
 const INCOME_WORDS = ['nhan', 'duoc', 'luong', 'thuong', 'thu ve', 'hoan tien', 'ban duoc', 'lai', 'co tuc', 'thu nhap'];
-const TRANSFER_WORDS = ['chuyen tien', 'chuyen', 'rut tien', 'rut', 'nap vao', 'ck'];
+const TRANSFER_WORDS = ['chuyen tien', 'chuyen', 'rut tien', 'rut', 'nap vao', 'nap', 'ck'];
 const FILLER = [
   'hom nay', 'hom qua', 'hom kia', 'dung', 'vi', 'tai khoan', 'tk', 'bang', 'qua', 'tu', 'sang', 'o', 'cua',
   'duoc', 'het', 'mua', 'nhan', 'tien', 'cho', 'vao', 'luc', 'toi', 'minh', 'em', 'anh', 'la', 'voi', 'trong',
@@ -17,9 +17,12 @@ const FILLER = [
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const wordRe = (key) => new RegExp(`(^|\\s)${escapeRe(key)}(?=\\s|$)`);
 
-export function loadCatalog() {
-  const wallets = db.prepare('SELECT * FROM wallets WHERE archived = 0').all();
-  const categories = db.prepare('SELECT * FROM categories WHERE archived = 0').all();
+export async function loadCatalog() {
+  const [wallets, categories, settings] = await Promise.all([
+    db.prepare('SELECT * FROM wallets WHERE user_id = @uid AND archived = 0').all(),
+    db.prepare('SELECT * FROM categories WHERE user_id = @uid AND archived = 0').all(),
+    getSettings(),
+  ]);
   const keysOf = (x) =>
     [x.name, ...(x.aliases || '').split(',')]
       .map((k) => normalize(k))
@@ -28,7 +31,7 @@ export function loadCatalog() {
   return {
     wallets: wallets.map((w) => ({ ...w, keys: keysOf(w) })),
     categories: categories.map((c) => ({ ...c, keys: keysOf(c) })),
-    settings: getSettings(),
+    settings,
   };
 }
 
@@ -118,7 +121,7 @@ export function splitSegments(message) {
 }
 
 /** Phân tích 1 câu -> giao dịch nháp */
-export function parseSegment(raw, catalog = loadCatalog()) {
+export function parseSegment(raw, catalog) {
   const warnings = [];
   // ghi chú sau dấu #
   let note = null;
@@ -129,6 +132,8 @@ export function parseSegment(raw, catalog = loadCatalog()) {
     body = raw.slice(0, hashIdx);
   }
   let { date, text } = extractDate(normalize(body).replace(/[^a-z0-9\s.,/@$-]/g, ' '));
+  // bỏ từ chỉ ngày để không bị nhầm với tên khoản ("hôm qua" ≠ "quà")
+  text = text.replace(/(^|\s)hom (nay|qua|kia)(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
 
   // 1. Loại giao dịch
   let type = null;
@@ -140,8 +145,9 @@ export function parseSegment(raw, catalog = loadCatalog()) {
     text = text.slice(verb[0].length).trim();
   }
 
-  // 2. Số tiền
-  const am = text.match(AMOUNT_RE);
+  // 2. Số tiền: ưu tiên số có đơn vị (k, tr...) hoặc >= 1.000 ("mua 2 ly cafe 50k" -> 50k)
+  const all = [...text.matchAll(new RegExp(AMOUNT_RE.source, 'gi'))];
+  const am = all.find((m) => m[2] || parseAmountMatch(m) >= 1000) || all[0] || null;
   let amount = parseAmountMatch(am);
   const amountHasVndUnit = am && /^(k|nghin|ngan|tr|trieu|cu|m|ty|b|d|vnd)$/i.test(am[2] || '');
   if (am) text = (text.slice(0, am.index) + ' ' + text.slice(am.index + am[0].length)).replace(/\s+/g, ' ').trim();
@@ -149,20 +155,44 @@ export function parseSegment(raw, catalog = loadCatalog()) {
   // 3. Ví
   const wHits = findAll(text, catalog.wallets);
 
+  // "rút 500k bidv" (1 ví) -> chuyển từ ví đó về ví tiền mặt
+  const cashWallet = catalog.wallets.find((w) => w.type === 'cash');
+  if ((!type || type === 'transfer') && wHits.length === 1 && hasWord(text, ['rut', 'rut tien']) && cashWallet && wHits[0].item.id !== cashWallet.id) {
+    type = 'transfer';
+    wHits.push({ item: cashWallet, key: '', index: text.length });
+  }
+
   if (!type) {
     if (wHits.length >= 2 && hasWord(text, TRANSFER_WORDS)) type = 'transfer';
     else if (hasWord(text, INCOME_WORDS) && !hasWord(text, ['mua', 'het', 'tra tien', 'thanh toan'])) type = 'income';
     else if (hasWord(text, EXPENSE_WORDS)) type = 'expense';
+  }
+  if (!type && amount) {
+    // Không có động từ: đoán theo tên khoản ("cafe 25k" -> chi, "thưởng 2tr" -> thu); không rõ thì mặc định là chi
+    const rest = wHits.reduce((t, h) => removeKey(t, h.key), text);
+    const inc = findAll(rest, catalog.categories.filter((c) => c.type === 'income'));
+    const exp = findAll(rest, catalog.categories.filter((c) => c.type === 'expense'));
+    if (inc.length && !exp.length) type = 'income';
+    else {
+      type = 'expense';
+      if (!exp.length) warnings.push('Không có chữ "chi"/"thu" → hiểu là khoản chi');
+    }
   }
 
   let wallet = null;
   let toWallet = null;
   if (type === 'transfer') {
     [wallet, toWallet] = [wHits[0]?.item, wHits[1]?.item];
+    // "nạp 200k momo từ techcombank": ví sau "từ" là ví nguồn; ví sau "về/vào/sang" là ví nhận
+    const before = (h) => text.slice(0, h.index).trim().split(' ').pop();
+    const src = wHits.slice(0, 2).find((h) => before(h) === 'tu');
+    const dst = wHits.slice(0, 2).find((h) => ['ve', 'vao', 'sang', 'cho'].includes(before(h)));
+    if (src && wHits[1]) { wallet = src.item; toWallet = wHits.slice(0, 2).find((h) => h !== src).item; }
+    else if (dst && wHits[1]) { toWallet = dst.item; wallet = wHits.slice(0, 2).find((h) => h !== dst).item; }
   } else {
     wallet = wHits[0]?.item;
   }
-  for (const h of wHits.slice(0, type === 'transfer' ? 2 : 1)) text = removeKey(text, h.key);
+  for (const h of wHits.slice(0, type === 'transfer' ? 2 : 1)) if (h.key) text = removeKey(text, h.key);
 
   // 4. Khoản thu/chi
   let category = null;
@@ -260,9 +290,9 @@ export function looksLikeTransactions(message) {
 
 export function looksLikeAdvice(message) {
   const n = normalize(message);
-  return /(goi y|tu van|nen chia|chia hu|phan bo|chia tien|nen tiet kiem|lam sao|the nao|bao nhieu|nen de|ke hoach)/.test(n);
+  return /(goi y|tu van|nen chia|chia hu|chia luong|phan bo|chia tien|nen tiet kiem|can tiet kiem|muon tiet kiem|nen de danh|ke hoach chi|lam sao de|lam the nao de)/.test(n);
 }
 
-export function parseMessage(message, catalog = loadCatalog()) {
+export function parseMessage(message, catalog) {
   return splitSegments(message).map((s) => parseSegment(s, catalog));
 }

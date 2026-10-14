@@ -2,7 +2,7 @@
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TOKEN_KEY = 'finora-token';
 const OUTBOX_KEY = 'finora-outbox';
-// Khi deploy frontend và backend ở 2 nơi (VD: Vercel + Railway): đặt VITE_API_URL=https://api-cua-ban.up.railway.app
+// Mặc định giao diện và API cùng domain (Vercel). Nếu để API ở nơi khác: đặt VITE_API_URL=https://api-cua-ban.example.com
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
 export const rid = () =>

@@ -1,13 +1,11 @@
-# 🚀 Tạo repo & deploy Finora
+# 🚀 Deploy Finora miễn phí: Vercel + Turso
 
-Finora gồm 2 phần:
-
-| Phần | Thư mục | Chạy ở đâu |
+| Phần | Chạy ở đâu | Chi phí |
 |---|---|---|
-| Giao diện (React + Vite, file tĩnh) | `client/` | **Vercel** |
-| API + dữ liệu (Express + SQLite) | `server/` | Máy chủ có **ổ đĩa lưu trữ** (Railway, Render có Disk, VPS…) |
+| Giao diện (React) + API (Express) | **Vercel** (gói Hobby). API chạy dạng Serverless Function trong thư mục `api/` | Miễn phí |
+| Database | **Turso** (gói Free: 5 GB, 500 triệu lượt đọc và 10 triệu lượt ghi mỗi tháng, không cần thẻ) | Miễn phí |
 
-> **Vì sao không để API trên Vercel?** Vercel chạy code dạng serverless: mỗi request có thể chạy trên một máy mới và ổ đĩa không giữ lại dữ liệu. SQLite lưu dữ liệu vào file, nên đặt trên Vercel sẽ **mất dữ liệu** sau mỗi lần deploy hoặc khởi động lại. Muốn để toàn bộ trên Vercel thì phải chuyển sang database online (Turso, Postgres…), việc này cần sửa phần truy vấn.
+> Hạn mức trên là của gói miễn phí tại thời điểm viết. Hãy xem lại trang giá của Vercel và Turso. Với 1 người hoặc 1 gia đình dùng, mức này dư rất nhiều.
 
 ---
 
@@ -15,23 +13,21 @@ Finora gồm 2 phần:
 
 **Cài đặt (1 lần):** [Git](https://git-scm.com/download/win), [Node.js LTS](https://nodejs.org) (bản 20 trở lên), tài khoản [GitHub](https://github.com).
 
-1. Giải nén `finance-app.zip`, ví dụ vào `D:\Projects\finora`.
-2. Trên GitHub bấm **New repository** → tên `finora` → chọn **Private** → **không** tick "Add a README" → **Create repository**.
-3. Mở PowerShell trong thư mục dự án:
+1. Trên GitHub bấm **New repository** → tên `finora` → **Private** → **không** tick "Add a README" → **Create repository**.
+2. Mở PowerShell **trong thư mục có file `package.json`** (VD `D:\JOB\finora\finance-app`):
 
 ```powershell
-cd D:\Projects\finora
 git init
 git add .
-git commit -m "Finora: phiên bản đầu tiên"
+git commit -m "Finora: Vercel + Turso"
 git branch -M main
 git remote add origin https://github.com/<tên-github-của-bạn>/finora.git
 git push -u origin main
 ```
 
-Lần đầu push, Git sẽ mở cửa sổ đăng nhập GitHub. File `.gitignore` đã loại sẵn `node_modules`, `server/data` (dữ liệu thật) và `.env` (mật khẩu SMTP), nên không lo lộ dữ liệu.
+Báo **Repository not found**: repo chưa được tạo, sai tên tài khoản trong URL, hoặc máy đang nhớ đăng nhập GitHub của tài khoản khác. Chạy `cmdkey /delete:git:https://github.com` rồi push lại để đăng nhập lại.
 
-**Chạy thử trên máy trước khi deploy:**
+**Chạy thử trên máy (không cần Turso):**
 
 ```powershell
 npm run setup
@@ -40,55 +36,66 @@ npm run seed:demo      # tài khoản demo@finora.vn / finora123
 npm run dev            # mở http://localhost:5173
 ```
 
----
-
-## Bước 2 · Deploy API (ví dụ Railway)
-
-Giao diện các nhà cung cấp có thể thay đổi đôi chút. Ý chính là: **thư mục gốc `server`, lệnh `npm start`, gắn ổ đĩa vào `/data`**.
-
-1. Vào [railway.com](https://railway.com) → đăng nhập bằng GitHub → **New Project** → **Deploy from GitHub repo** → chọn `finora`.
-2. Mở service vừa tạo → **Settings**:
-   - **Root Directory**: `server`
-   - Start command: `npm start` (thường tự nhận)
-   - **Networking → Generate Domain** → ghi lại địa chỉ, ví dụ `https://finora-api.up.railway.app`
-3. Thêm **Volume** (ổ đĩa) cho service, **Mount path**: `/data`.
-4. Tab **Variables**, thêm:
-
-| Biến | Giá trị |
-|---|---|
-| `DATA_DIR` | `/data` |
-| `APP_URL` | địa chỉ Vercel ở bước 3, ví dụ `https://finora.vercel.app` |
-| `CORS_ORIGIN` | giống `APP_URL` |
-| `ANTHROPIC_API_KEY` | *(tuỳ chọn)* bật chat AI |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | gửi email quên mật khẩu (xem bước 4) |
-
-5. Deploy xong, mở `https://<domain-api>/health`. Thấy `{"ok":true}` là API đã chạy.
-
-*Lựa chọn khác:* Render (Web Service + Disk gắn vào `/data`) hoặc VPS chạy `node src/index.js` với pm2. Biến môi trường giống bảng trên. Gói có ổ đĩa lưu trữ thường **tính phí**, hãy xem bảng giá hiện tại của nhà cung cấp.
+Khi chưa điền `TURSO_DATABASE_URL`, dữ liệu lưu ở file `server\data\finora.db`.
 
 ---
 
-## Bước 3 · Deploy giao diện lên Vercel
+## Bước 2 · Tạo database trên Turso
+
+1. Vào [app.turso.tech](https://app.turso.tech) → đăng nhập bằng GitHub.
+2. Tạo database mới, tên `finora`. Nếu được hỏi loại database, chọn **libSQL**. Chọn vị trí gần Việt Nam nhất trong danh sách (VD Tokyo / Singapore / Mumbai).
+3. Mở database vừa tạo, lấy 2 giá trị:
+   - **URL**: dạng `libsql://finora-<tên-bạn>.turso.io`
+   - **Token**: bấm tạo token (quyền đọc + ghi), copy chuỗi dài `eyJ...` (chỉ hiện 1 lần).
+
+Không cần tạo bảng: app tự tạo khi chạy lần đầu.
+
+*Dùng dòng lệnh (macOS/Linux, hoặc WSL trên Windows):* `turso db create finora` · `turso db show finora` (xem URL) · `turso db tokens create finora` (tạo token).
+
+---
+
+## Bước 3 · Deploy lên Vercel
 
 1. Vào [vercel.com](https://vercel.com) → đăng nhập bằng GitHub → **Add New… → Project** → **Import** repo `finora`.
 2. Cấu hình:
-   - **Root Directory**: `client` (bấm Edit để chọn)
-   - **Framework Preset**: Vite
-   - Build Command `npm run build`, Output Directory `dist` (mặc định)
-   - **Environment Variables**: `VITE_API_URL` = địa chỉ API ở bước 2, ví dụ `https://finora-api.up.railway.app` (không có `/` ở cuối)
-3. Bấm **Deploy** → nhận địa chỉ, ví dụ `https://finora.vercel.app`.
-4. Quay lại Railway, kiểm tra `APP_URL` và `CORS_ORIGIN` đúng bằng địa chỉ này rồi **redeploy** API.
+   - **Root Directory**: để **trống** (thư mục gốc của repo). Đừng chọn `client`.
+   - **Framework Preset**: Other. Lệnh build, cài đặt và thư mục kết quả đã khai báo sẵn trong `vercel.json`, không cần sửa.
+   - **Environment Variables**:
 
-File `client/vercel.json` đã cấu hình để mở trực tiếp các đường dẫn như `/hive` hay `/reset-password?token=…` không bị lỗi 404.
+| Biến | Giá trị |
+|---|---|
+| `TURSO_DATABASE_URL` | URL ở bước 2 (`libsql://...`) |
+| `TURSO_AUTH_TOKEN` | Token ở bước 2 |
+| `APP_URL` | Địa chỉ Vercel, VD `https://finora.vercel.app` (điền sau khi có, rồi Redeploy) |
+| `ANTHROPIC_API_KEY` | *(tuỳ chọn)* bật chat AI |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | *(tuỳ chọn)* gửi email quên mật khẩu, xem bước 5 |
 
-Từ nay, mỗi lần `git push` lên nhánh `main`, Vercel và Railway sẽ **tự deploy lại**.
+3. Bấm **Deploy** → nhận địa chỉ, VD `https://finora.vercel.app`.
+4. Mở `https://<địa-chỉ>/api/health`. Thấy `{"ok":true,"db":"turso"}` là API đã nối được database.
+5. Vào **Settings → Environment Variables** điền `APP_URL` đúng địa chỉ → tab **Deployments** → **Redeploy**.
+
+Từ nay mỗi lần `git push` lên `main`, Vercel tự deploy lại.
+
+**Nên làm:** Vercel → **Settings → Functions → Function Region**, chọn vùng gần vị trí database Turso (VD Tokyo `hnd1`, Singapore `sin1`) để app phản hồi nhanh hơn.
 
 ---
 
-## Bước 4 · Email quên mật khẩu (Gmail)
+## Bước 4 · (Tuỳ chọn) Tạo tài khoản demo trên database online
 
-1. Bật xác minh 2 bước cho Gmail → vào **Mật khẩu ứng dụng (App passwords)** → tạo một mật khẩu 16 ký tự.
-2. Điền biến môi trường cho API:
+Trên máy, điền URL và token Turso vào `server\.env` rồi chạy:
+
+```powershell
+npm run seed:demo
+```
+
+Hoặc chỉ cần mở app và **Đăng ký**: màn đăng ký có lựa chọn tạo sẵn dữ liệu mẫu.
+
+---
+
+## Bước 5 · Email quên mật khẩu (Gmail)
+
+1. Bật xác minh 2 bước cho Gmail → **Mật khẩu ứng dụng (App passwords)** → tạo mật khẩu 16 ký tự.
+2. Thêm biến môi trường trên Vercel rồi Redeploy:
 
 ```
 SMTP_HOST=smtp.gmail.com
@@ -99,40 +106,37 @@ SMTP_PASS=<mật khẩu ứng dụng 16 ký tự>
 MAIL_FROM=Finora <ban@gmail.com>
 ```
 
-Chưa cấu hình SMTP thì app vẫn chạy, nhưng email chỉ được in ra log của server.
-
----
-
-## Cách nhanh: chỉ deploy bản xem thử (không cần API)
-
-Phù hợp để gửi người khác xem giao diện. Dữ liệu nằm trong trình duyệt của từng người xem, có sẵn tài khoản demo.
-
-Tạo **project Vercel thứ hai** từ cùng repo:
-
-- **Root Directory**: `client`
-- **Build Command**: `npm run build:demo`
-- **Output Directory**: `dist-demo`
-
-Bản demo dùng chung code nghiệp vụ trong `server/src`. Nếu build báo không tìm thấy file trong `server/`, vào **Settings → Root Directory** và bật tuỳ chọn cho phép dùng file nằm ngoài thư mục gốc (Include files outside the root directory).
+Chưa cấu hình SMTP thì app vẫn chạy, nhưng không gửi được email đặt lại mật khẩu (nội dung email chỉ in ra log trong Vercel → Logs).
 
 ---
 
 ## Cài lên điện thoại
 
-Sau khi deploy, mở địa chỉ Vercel trên điện thoại:
+Mở địa chỉ Vercel trên điện thoại:
 
 - **iPhone** (Safari): Chia sẻ → *Thêm vào Màn hình chính*.
 - **Android** (Chrome): ⋮ → *Cài đặt ứng dụng*.
 
-Đăng nhập cùng tài khoản trên máy tính và điện thoại: dữ liệu tự đồng bộ sau vài giây. Ghi lúc mất mạng thì app lưu tạm và tự gửi khi có mạng.
-
-> Tính năng cài app (service worker) chỉ chạy trên **https**. Vercel đã có sẵn https.
+Đăng nhập cùng tài khoản trên máy tính và điện thoại: dữ liệu tự đồng bộ sau vài giây.
 
 ## Sao lưu dữ liệu
 
-Toàn bộ dữ liệu nằm trong thư mục `DATA_DIR`:
+- Turso: trang database có chức năng sao lưu / khôi phục theo thời điểm (tuỳ gói).
+- Tự tải bản sao (cần Turso CLI): `turso db shell finora .dump > finora-backup.sql`
 
-- `auth.db`: tài khoản và phiên đăng nhập
-- `users/<id>.db`: dữ liệu riêng của từng người
+## Bản xem thử không cần database
 
-Hãy định kỳ tải về hoặc snapshot ổ đĩa (volume).
+Tạo **project Vercel thứ hai** từ cùng repo: Root Directory `client`, Build Command `npm run build:demo`, Output Directory `dist-demo`, bật *Include files outside the root directory*. Dữ liệu nằm trong trình duyệt của người xem.
+
+## Lỗi thường gặp
+
+| Hiện tượng | Cách xử lý |
+|---|---|
+| `/api/health` báo không kết nối được database | Kiểm tra lại `TURSO_DATABASE_URL` (bắt đầu bằng `libsql://`) và `TURSO_AUTH_TOKEN`, rồi Redeploy |
+| Trang trắng / 404 khi mở `/hive` | Root Directory trên Vercel phải để trống (thư mục gốc), không phải `client` |
+| Đăng nhập báo lỗi 500 | Xem Vercel → project → **Logs** để biết chi tiết |
+| Lần đầu mở hơi chậm (1–2 giây) | Bình thường với serverless: function "ngủ" khi không ai dùng và khởi động lại khi có request |
+
+## Chạy trên máy chủ riêng (VPS) thay vì Vercel
+
+`npm run setup && npm run build && npm start` → cổng 4000 phục vụ cả giao diện và API. Có thể dùng file database trên máy chủ (bỏ trống biến Turso) hoặc vẫn dùng Turso.

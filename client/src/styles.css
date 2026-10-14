@@ -1,3 +1,4 @@
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Finora — theme lấy từ logo: nền kem, xanh lá (nét ong), cam (chữ Finora), vàng mật (thân ong), hồng đào (hoa), xanh non (lá).
    Layout: thanh bên sáng có logo + nội dung nhiều khoảng trắng, ít viền, không đổ bóng. */
 :root {

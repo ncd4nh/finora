@@ -5,10 +5,14 @@ import { Alert, useCatalog } from '../components/ui.jsx';
 
 const KEY = 'finance-chat-v1';
 const EXAMPLES = [
-  'Chi 100k Ăn uống Techcombank, Thu 500k Lương BIDV',
-  'Hôm qua đổ xăng 60k tiền mặt và mua sách 120k tcb',
-  'Chuyển 2tr Techcombank BIDV',
-  'Tháng này tôi cần tiết kiệm 5tr để mua khoá học, nên chia lương còn lại thế nào?',
+  'Ăn trưa 45k MoMo, cafe 25k',
+  'Hôm qua đổ xăng 60k tiền mặt',
+  'Hôm nay chi bao nhiêu',
+  'Số dư các ví',
+  'Tình hình hũ',
+  'Tháng này tiêu nhiều nhất vào gì',
+  'Tháng này cần tiết kiệm 5tr mua khoá học, nên chia thế nào?',
+  'Bạn làm được gì?',
 ];
 
 const load = () => {
@@ -59,9 +63,11 @@ export default function Chat() {
     <div className="chat">
       <div className="page-head" style={{ marginBottom: 8 }}>
         <div>
-          <h1><span className="emo">💬</span>Chat AI</h1>
+          <h1><span className="emo">💬</span>Trợ lý chat</h1>
           <div className="faint">
-            {settings.ai_enabled ? `🤖 AI đang bật (${settings.ai_model}) — hiểu câu tự nhiên & tư vấn` : '🤖 Chưa cấu hình API key — hiểu công thức + câu đơn giản, tư vấn theo quy tắc'}
+            {settings.ai_enabled
+              ? `⚡ Tự xử lý câu ngắn · 🤖 AI (${settings.ai_model}) hỗ trợ câu khó`
+              : '⚡ Tự xử lý ngay, không cần AI: ghi thu chi, hỏi số dư, chi tiêu, hũ, mục tiêu'}
           </div>
         </div>
         {msgs.length > 0 && <button className="sm ghost" onClick={() => setMsgs([])}>Xoá lịch sử</button>}
@@ -70,7 +76,7 @@ export default function Chat() {
       <div className="chat-log" ref={logRef}>
         {!msgs.length && (
           <div className="msg bot wide">
-            Chào bạn 👋 Gõ nhanh thu/chi theo công thức <span className="formula">Chi 100k Ăn uống Techcombank</span> hoặc nói tự nhiên — mình sẽ chuyển thành giao dịch để bạn xác nhận. Cũng có thể hỏi cách chia hũ.
+            Chào bạn 👋 Gõ ngắn như <span className="formula">ăn trưa 45k momo</span> để ghi thu chi, hoặc hỏi <span className="formula">tháng này chi bao nhiêu</span>, <span className="formula">hũ hưởng thụ còn bao nhiêu</span>. Mình tự xử lý ngay, không cần AI.
             <div className="chips" style={{ marginTop: 10 }}>
               {EXAMPLES.map((e) => <button key={e} className="chip" onClick={() => send(e)}>{e}</button>)}
             </div>
@@ -80,7 +86,7 @@ export default function Chat() {
           m.role === 'user' ? (
             <div key={m.id} className="msg user">{m.text}</div>
           ) : (
-            <BotMsg key={m.id} m={m} onPatch={(p) => patch(m.id, p)} onDone={reloadCatalog} />
+            <BotMsg key={m.id} m={m} last={m === msgs[msgs.length - 1]} onSend={send} onPatch={(p) => patch(m.id, p)} onDone={reloadCatalog} />
           )
         )}
         {busy && <div className="msg bot typing" aria-label="Đang xử lý"><i /><i /><i /></div>}
@@ -91,7 +97,7 @@ export default function Chat() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder='VD: "Chi 45k cà phê MoMo, Thu 2tr thưởng BIDV"'
+          placeholder='VD: "cafe 25k momo" hoặc "tháng này chi bao nhiêu"'
           aria-label="Tin nhắn"
         />
         <button className="primary" disabled={busy || !input.trim()}>Gửi</button>
@@ -100,10 +106,19 @@ export default function Chat() {
   );
 }
 
-function BotMsg({ m, onPatch, onDone }) {
+function BotMsg({ m, last, onSend, onPatch, onDone }) {
   if (m.kind === 'transactions') return <TxProposal m={m} onPatch={onPatch} onDone={onDone} />;
   if (m.kind === 'advice') return <Advice m={m} onPatch={onPatch} />;
-  return <div className="msg bot"><Rich text={m.text} /></div>;
+  return (
+    <div className="msg bot">
+      <Rich text={m.text} />
+      {last && m.suggestions?.length > 0 && (
+        <div className="chips" style={{ marginTop: 10, whiteSpace: 'normal' }}>
+          {m.suggestions.map((s) => <button key={s} className="chip" onClick={() => onSend(s)}>{s}</button>)}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------- Đề xuất giao dịch: sửa được trước khi xác nhận ----------

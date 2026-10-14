@@ -1,6 +1,5 @@
 // Tài khoản: đăng ký, đăng nhập, phiên, đổi mật khẩu, quên mật khẩu
-import fs from 'node:fs';
-import { authDb, runWithUser, openUserDb, closeUserDb, userDbPath, legacyDbPath } from '../db.js';
+import { db, batch, runWithUser, seedDefaults, deleteUserData } from '../db.js';
 import { hashPassword, verifyPassword, randomToken, sha256 } from './security.js';
 import { sendMail, resetLink } from './mailer.js';
 import { HttpError } from './finance.js';
@@ -35,7 +34,7 @@ function rateLimit(key, max, windowMs) {
 
 async function createSession(userId, device) {
   const token = randomToken();
-  authDb.prepare('INSERT INTO sessions(token_hash, user_id, expires_at, device, last_seen) VALUES (?,?,?,?,?)')
+  await db.prepare('INSERT INTO sessions(token_hash, user_id, expires_at, device, last_seen) VALUES (?,?,?,?,?)')
     .run(await sha256(token), userId, later(SESSION_DAYS * 864e5), String(device || 'Thiết bị không rõ').slice(0, 80), iso(new Date()));
   return token;
 }
@@ -45,25 +44,27 @@ export async function register({ name, email, password, demo }, seedDemo, device
   name = String(name || '').trim();
   if (!name) throw new HttpError(400, 'Vui lòng nhập tên hiển thị');
   checkPassword(password);
-  if (authDb.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) throw new HttpError(409, 'Email này đã có tài khoản');
-  const isFirst = authDb.prepare('SELECT COUNT(*) c FROM users').get().c === 0;
-  const id = Number(authDb.prepare('INSERT INTO users(email, name, password_hash) VALUES (?,?,?)')
-    .run(email, name, await hashPassword(password)).lastInsertRowid);
-  // Người dùng đầu tiên kế thừa dữ liệu của bản cũ (1 người dùng) nếu có
-  const legacy = legacyDbPath();
-  if (isFirst && legacy && fs.existsSync?.(legacy) && !fs.existsSync?.(userDbPath(id))) {
-    try { fs.renameSync(legacy, userDbPath(id)); } catch { /* bỏ qua */ }
+  if (await db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) throw new HttpError(409, 'Email này đã có tài khoản');
+  let id;
+  try {
+    id = (await db.prepare('INSERT INTO users(email, name, password_hash) VALUES (?,?,?)')
+      .run(email, name, await hashPassword(password))).lastInsertRowid;
+  } catch (e) {
+    if (/UNIQUE/i.test(e.message)) throw new HttpError(409, 'Email này đã có tài khoản');
+    throw e;
   }
-  openUserDb(id);
-  if (demo && seedDemo) runWithUser(id, () => seedDemo());
-  const user = authDb.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  await runWithUser(id, async () => {
+    await seedDefaults();
+    if (demo && seedDemo) await seedDemo();
+  });
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   return { token: await createSession(id, device), user: publicUser(user) };
 }
 
 export async function login({ email, password }, device) {
   email = normEmail(email);
   rateLimit(`login:${email}`, 8, 15 * 60e3);
-  const u = authDb.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const u = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (!u || !(await verifyPassword(String(password || ''), u.password_hash))) throw new HttpError(401, 'Email hoặc mật khẩu không đúng');
   hits.delete(`login:${email}`);
   return { token: await createSession(u.id, device), user: publicUser(u) };
@@ -71,13 +72,13 @@ export async function login({ email, password }, device) {
 
 export async function userFromToken(token) {
   if (!token) return null;
-  const row = authDb.prepare(
+  const row = await db.prepare(
     `SELECT u.*, s.token_hash, s.last_seen FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`
   ).get(await sha256(token), iso(new Date()));
   return row || null;
 }
 
-/** Middleware: bắt buộc đăng nhập, gắn req.user và chạy trong DB của người dùng */
+/** Middleware: bắt buộc đăng nhập, gắn req.user và chạy trong ngữ cảnh dữ liệu của người dùng */
 export async function requireAuth(req, res, next) {
   try {
     const h = req.headers?.authorization || '';
@@ -87,7 +88,7 @@ export async function requireAuth(req, res, next) {
     req.user = user;
     // cập nhật "hoạt động lần cuối" (tối đa 1 lần / 5 phút)
     if (!user.last_seen || Date.now() - Date.parse(user.last_seen) > 5 * 60e3) {
-      authDb.prepare('UPDATE sessions SET last_seen = ? WHERE token_hash = ?').run(iso(new Date()), user.token_hash);
+      await db.prepare('UPDATE sessions SET last_seen = ? WHERE token_hash = ?').run(iso(new Date()), user.token_hash);
     }
     runWithUser(user.id, () => next());
   } catch (e) {
@@ -95,11 +96,11 @@ export async function requireAuth(req, res, next) {
   }
 }
 
-export function logout(user) {
-  authDb.prepare('DELETE FROM sessions WHERE token_hash = ?').run(user.token_hash);
+export async function logout(user) {
+  await db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(user.token_hash);
 }
 
-export function updateProfile(user, { name, email, avatar }) {
+export async function updateProfile(user, { name, email, avatar }) {
   const fields = {};
   if (name !== undefined) {
     fields.name = String(name).trim();
@@ -107,7 +108,7 @@ export function updateProfile(user, { name, email, avatar }) {
   }
   if (email !== undefined) {
     fields.email = normEmail(email);
-    const other = authDb.prepare('SELECT id FROM users WHERE email = ? AND id <> ?').get(fields.email, user.id);
+    const other = await db.prepare('SELECT id FROM users WHERE email = ? AND id <> ?').get(fields.email, user.id);
     if (other) throw new HttpError(409, 'Email này đã được dùng');
   }
   if (avatar !== undefined) {
@@ -116,31 +117,33 @@ export function updateProfile(user, { name, email, avatar }) {
     fields.avatar = avatar || null;
   }
   if (Object.keys(fields).length) {
-    authDb.prepare(`UPDATE users SET ${Object.keys(fields).map((k) => `${k}=@${k}`).join(', ')}, updated_at=CURRENT_TIMESTAMP WHERE id=@id`)
+    await db.prepare(`UPDATE users SET ${Object.keys(fields).map((k) => `${k}=@${k}`).join(', ')}, updated_at=CURRENT_TIMESTAMP WHERE id=@id`)
       .run({ ...fields, id: user.id });
   }
-  return publicUser(authDb.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
+  return publicUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 }
 
 export async function changePassword(user, { current, next: nextPw }) {
   if (!(await verifyPassword(String(current || ''), user.password_hash))) throw new HttpError(400, 'Mật khẩu hiện tại không đúng');
   checkPassword(nextPw);
   if (current === nextPw) throw new HttpError(400, 'Mật khẩu mới phải khác mật khẩu cũ');
-  authDb.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(await hashPassword(nextPw), user.id);
-  // Đăng xuất các thiết bị khác, giữ phiên hiện tại
-  authDb.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, user.token_hash);
+  await batch([
+    ['UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [await hashPassword(nextPw), user.id]],
+    // Đăng xuất các thiết bị khác, giữ phiên hiện tại
+    ['DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', [user.id, user.token_hash]],
+  ]);
   return { ok: true };
 }
 
 export async function forgotPassword({ email }) {
   email = normEmail(email);
   rateLimit(`forgot:${email}`, 3, 15 * 60e3);
-  const u = authDb.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const u = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   // Luôn trả cùng 1 thông báo để không lộ email nào có tài khoản
   const result = { ok: true, message: 'Nếu email có tài khoản, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu. Liên kết có hiệu lực 30 phút.' };
   if (!u) return result;
   const token = randomToken();
-  authDb.prepare('INSERT INTO password_resets(token_hash, user_id, expires_at) VALUES (?,?,?)')
+  await db.prepare('INSERT INTO password_resets(token_hash, user_id, expires_at) VALUES (?,?,?)')
     .run(await sha256(token), u.id, later(RESET_MINUTES * 60e3));
   const link = resetLink(token);
   await sendMail({
@@ -157,33 +160,38 @@ export async function forgotPassword({ email }) {
 export async function resetPassword({ token, password }) {
   if (!token) throw new HttpError(400, 'Thiếu mã đặt lại');
   checkPassword(password);
-  const row = authDb.prepare('SELECT * FROM password_resets WHERE token_hash = ?').get(await sha256(token));
+  const row = await db.prepare('SELECT * FROM password_resets WHERE token_hash = ?').get(await sha256(token));
   if (!row || row.used_at || row.expires_at < iso(new Date())) throw new HttpError(400, 'Liên kết đã hết hạn hoặc đã được dùng. Hãy yêu cầu lại.');
-  authDb.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(await hashPassword(password), row.user_id);
-  authDb.prepare('UPDATE password_resets SET used_at = ? WHERE token_hash = ?').run(iso(new Date()), row.token_hash);
-  authDb.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  await batch([
+    ['UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [await hashPassword(password), row.user_id]],
+    ['UPDATE password_resets SET used_at = ? WHERE token_hash = ?', [iso(new Date()), row.token_hash]],
+    ['DELETE FROM sessions WHERE user_id = ?', [row.user_id]],
+  ]);
   return { ok: true, message: 'Đã đặt mật khẩu mới. Hãy đăng nhập lại.' };
 }
 
-export function deleteAccount(user) {
-  authDb.prepare('DELETE FROM users WHERE id = ?').run(user.id);
-  closeUserDb(user.id);
-  try { fs.unlinkSync?.(userDbPath(user.id)); } catch { /* bỏ qua */ }
+export async function deleteAccount(user) {
+  await runWithUser(user.id, () => deleteUserData());
+  await batch([
+    ['DELETE FROM sessions WHERE user_id = ?', [user.id]],
+    ['DELETE FROM password_resets WHERE user_id = ?', [user.id]],
+    ['DELETE FROM users WHERE id = ?', [user.id]],
+  ]);
 }
 
 // ---------- Thiết bị đang đăng nhập ----------
-export function listSessions(user) {
-  return authDb
+export async function listSessions(user) {
+  const rows = await db
     .prepare('SELECT rowid AS id, token_hash, device, created_at, last_seen, expires_at FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen DESC')
-    .all(user.id, iso(new Date()))
-    .map(({ token_hash, ...s }) => ({ ...s, current: token_hash === user.token_hash }));
+    .all(user.id, iso(new Date()));
+  return rows.map(({ token_hash, ...s }) => ({ ...s, current: token_hash === user.token_hash }));
 }
-export function revokeSession(user, id) {
-  const r = authDb.prepare('DELETE FROM sessions WHERE rowid = ? AND user_id = ? AND token_hash <> ?').run(Number(id), user.id, user.token_hash);
+export async function revokeSession(user, id) {
+  const r = await db.prepare('DELETE FROM sessions WHERE rowid = ? AND user_id = ? AND token_hash <> ?').run(Number(id), user.id, user.token_hash);
   if (!r.changes) throw new HttpError(404, 'Không tìm thấy thiết bị (hoặc đó là thiết bị đang dùng)');
   return { ok: true };
 }
-export function revokeOtherSessions(user) {
-  const r = authDb.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, user.token_hash);
+export async function revokeOtherSessions(user) {
+  const r = await db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?').run(user.id, user.token_hash);
   return { ok: true, count: r.changes };
 }
