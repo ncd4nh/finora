@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Avatar, PasswordField, imageToAvatar, useAuth } from '../components/auth.jsx';
-import { ThemeControl, useConfirm, useToast } from '../components/ui.jsx';
+import { ClearDemoButton, ThemeControl, useCatalog, useConfirm, useToast } from '../components/ui.jsx';
 import { MockInbox } from './Auth.jsx';
 import { timeAgo, useSync } from '../components/sync.jsx';
 import { outbox } from '../api.js';
@@ -11,6 +11,7 @@ const EMOJIS = ['🐝', '🌻', '🌸', '🍯', '🦋', '🐞', '🌿', '🍀', 
 
 export default function Account() {
   const { user, setUser, logout } = useAuth();
+  const { settings } = useCatalog();
   const toast = useToast();
   const ask = useConfirm();
   const fileRef = useRef(null);
@@ -128,6 +129,13 @@ export default function Account() {
           </div>
           <SyncCard />
           <DevicesCard />
+          {settings.has_demo && (
+            <div className="card">
+              <div className="card-head"><h2><span className="emo">🧪</span>Dữ liệu mẫu</h2></div>
+              <p className="muted" style={{ marginTop: 0 }}>Tài khoản đang có dữ liệu mẫu ~3 tháng tạo lúc đăng ký. Xoá đi để bắt đầu ghi chép thật; dữ liệu bạn tự nhập vẫn được giữ nguyên.</p>
+              <ClearDemoButton className="" />
+            </div>
+          )}
           <div className="card">
             <div className="card-head"><h2><span className="emo">🎨</span>Giao diện</h2></div>
             <ThemeControl />

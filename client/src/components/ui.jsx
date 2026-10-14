@@ -228,3 +228,23 @@ export function ConfirmProvider({ children }) {
   );
 }
 export const useConfirm = () => useContext(ConfirmCtx);
+
+// ---------- Nút xoá dữ liệu mẫu (chỉ hiện khi tài khoản tạo kèm dữ liệu mẫu) ----------
+export function ClearDemoButton({ className = 'sm' }) {
+  const { settings, reload } = useCatalog();
+  const ask = useConfirm();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  if (!settings.has_demo) return null;
+  async function clear() {
+    if (!(await ask('Xoá toàn bộ giao dịch, mục tiêu tiết kiệm và kỳ chia hũ mẫu? Dữ liệu bạn tự nhập vẫn được giữ nguyên.', 'Xoá dữ liệu mẫu'))) return;
+    setBusy(true);
+    try {
+      const r = await api.del('/demo-data');
+      toast(`🧹 Đã xoá dữ liệu mẫu (${r.transactions} giao dịch)`);
+      await reload();
+      window.dispatchEvent(new Event('finora:data-changed'));
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  }
+  return <button type="button" className={`${className} danger`} onClick={clear} disabled={busy}>{busy ? 'Đang xoá…' : '🧹 Xoá dữ liệu mẫu'}</button>;
+}

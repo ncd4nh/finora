@@ -1,4 +1,5 @@
-// Dữ liệu mẫu ~100 ngày (dùng cho CLI seed:demo, nút "dùng dữ liệu mẫu" và bản prototype)
+// Dữ liệu mẫu ~100 ngày (dùng cho CLI seed:demo, nút "dùng dữ liệu mẫu" và bản prototype).
+// Có thể xoá lại bằng clearDemo() (nút "Xoá dữ liệu mẫu" trong app).
 // Ghi toàn bộ trong vài lệnh gửi 1 lần (batch) để nhanh khi database ở xa (Turso).
 import { db, batch, getSettings } from './db.js';
 import { today, addDays, getPeriod } from './utils.js';
@@ -8,10 +9,11 @@ export async function hasTransactions() {
 }
 
 export async function seedDemo() {
-  const [wallets, cats, settings] = await Promise.all([
-    db.prepare('SELECT name, id, rate_to_base FROM wallets WHERE user_id = @uid').all(),
+  const [wallets, cats, settings, before] = await Promise.all([
+    db.prepare('SELECT name, id, rate_to_base, initial_balance FROM wallets WHERE user_id = @uid').all(),
     db.prepare('SELECT name, id, jar_id FROM categories WHERE user_id = @uid').all(),
     getSettings(),
+    maxIds(),
   ]);
   const W = Object.fromEntries(wallets.map((r) => [r.name, r.id]));
   const rate = Object.fromEntries(wallets.map((r) => [r.id, r.rate_to_base]));
@@ -61,7 +63,7 @@ export async function seedDemo() {
     const chunk = txs.slice(i, i + 100);
     txStmts.push([
       `INSERT INTO transactions(user_id, type, amount, amount_base, wallet_id, category_id, jar_id, note, date, source)
-       VALUES ${chunk.map(() => "(@uid,?,?,?,?,?,?,?,?,'manual')").join(',')}`,
+       VALUES ${chunk.map(() => "(@uid,?,?,?,?,?,?,?,?,'demo')").join(',')}`,
       chunk.flat(),
     ]);
   }
@@ -83,6 +85,9 @@ export async function seedDemo() {
     ['Tiền mặt', 6_000_000], ['Techcombank', 15_000_000], ['BIDV', 5_000_000],
     ['MoMo', 5_000_000], ['Chứng khoán', 30_000_000], ['Crypto (USDT)', 400],
   ];
+  // { id ví: [số dư mẫu, số dư trước đó] } để khi xoá dữ liệu mẫu trả lại số dư cũ
+  const oldBalance = Object.fromEntries(wallets.map((r) => [r.id, r.initial_balance]));
+  const demoBalances = Object.fromEntries(balances.filter(([name]) => W[name]).map(([name, v]) => [W[name], [v, oldBalance[W[name]] || 0]]));
 
   await batch([
     ...balances.map(([name, v]) => ['UPDATE wallets SET initial_balance = ? WHERE user_id = @uid AND name = ?', [v, name]]),
@@ -108,4 +113,54 @@ export async function seedDemo() {
       [goal, amount, date, note],
     ]),
   ]);
+
+  // Ghi lại những gì vừa tạo để sau này xoá đúng dữ liệu mẫu (giao dịch mẫu có source = 'demo')
+  const [goalIds, periodIds] = await Promise.all([
+    db.prepare('SELECT id FROM savings_goals WHERE user_id = @uid AND id > ?').all(before.goal),
+    db.prepare('SELECT id FROM jar_periods WHERE user_id = @uid AND id > ?').all(before.period),
+  ]);
+  await db.prepare(`INSERT INTO settings(user_id, key, value) VALUES (@uid, '${DEMO_KEY}', ?)
+    ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`).run(JSON.stringify({
+    goals: goalIds.map((r) => r.id),
+    periods: periodIds.map((r) => r.id),
+    balances: demoBalances,
+  }));
+}
+
+const DEMO_KEY = 'demo_data';
+async function maxIds() {
+  const [g, p] = await Promise.all([
+    db.prepare('SELECT COALESCE(MAX(id), 0) m FROM savings_goals WHERE user_id = @uid').get(),
+    db.prepare('SELECT COALESCE(MAX(id), 0) m FROM jar_periods WHERE user_id = @uid').get(),
+  ]);
+  return { goal: g.m, period: p.m };
+}
+
+/**
+ * Xoá dữ liệu mẫu: giao dịch mẫu, mục tiêu tiết kiệm mẫu, kỳ chia hũ mẫu và trả lại số dư ví
+ * (nếu người dùng chưa sửa). Dữ liệu người dùng tự nhập được giữ nguyên.
+ */
+export async function clearDemo() {
+  const row = await db.prepare(`SELECT value FROM settings WHERE user_id = @uid AND key = '${DEMO_KEY}'`).get();
+  if (!row) return { cleared: false, transactions: 0 };
+  let m = {};
+  try { m = JSON.parse(row.value || '{}'); } catch { /* hỏng: vẫn xoá giao dịch mẫu */ }
+  const ids = (a) => (Array.isArray(a) ? a.map(Number).filter(Boolean) : []);
+  const goals = ids(m.goals);
+  const periods = ids(m.periods);
+  const IN = (a) => `(${a.map(() => '?').join(',')})`;
+  const [del] = await batch([
+    ["DELETE FROM transactions WHERE user_id = @uid AND source = 'demo'"],
+    goals.length && [`DELETE FROM savings_contributions WHERE user_id = @uid AND goal_id IN ${IN(goals)}`, goals],
+    goals.length && [`UPDATE transactions SET savings_goal_id = NULL WHERE user_id = @uid AND savings_goal_id IN ${IN(goals)}`, goals],
+    goals.length && [`DELETE FROM savings_goals WHERE user_id = @uid AND id IN ${IN(goals)}`, goals],
+    periods.length && [`DELETE FROM jar_allocations WHERE user_id = @uid AND period_id IN ${IN(periods)}`, periods],
+    periods.length && [`DELETE FROM jar_transfers WHERE user_id = @uid AND period_id IN ${IN(periods)}`, periods],
+    periods.length && [`DELETE FROM jar_periods WHERE user_id = @uid AND id IN ${IN(periods)}`, periods],
+    ...Object.entries(m.balances || {}).map(([id, [demo, old]]) => [
+      'UPDATE wallets SET initial_balance = ? WHERE user_id = @uid AND id = ? AND initial_balance = ?', [old, Number(id), demo],
+    ]),
+    [`DELETE FROM settings WHERE user_id = @uid AND key = '${DEMO_KEY}'`],
+  ]);
+  return { cleared: true, transactions: Number(del?.rowsAffected) || 0 };
 }

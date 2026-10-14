@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { api } from '../api.js';
 import { dm, dmy, fmt } from '../format.js';
-import { Alert, CountUp, Progress, StatusBadge, useLoad } from '../components/ui.jsx';
+import { Alert, ClearDemoButton, CountUp, Progress, StatusBadge, useCatalog, useLoad } from '../components/ui.jsx';
 import { IncomeExpenseBars, Legend2 } from '../components/charts.jsx';
 import { FlowerIcon, Honeycomb } from '../components/hive.jsx';
 
@@ -13,6 +13,7 @@ function greeting() {
 export default function Dashboard() {
   const [d, , loading, error] = useLoad(() => api.get('/dashboard'));
   const [hive] = useLoad(() => api.get('/report/hive'));
+  const { settings } = useCatalog();
   if (error) return <div className="card">Không tải được dữ liệu: {error}. Kiểm tra server đã chạy chưa.</div>;
   if (!d) return <div className="muted">{loading ? 'Đang tải…' : ''}</div>;
   const js = d.jar_status;
@@ -30,6 +31,16 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {settings.has_demo && (
+        <div style={{ marginBottom: 18 }}>
+          <Alert level="info">
+            <div className="row between wrap" style={{ gap: 8 }}>
+              <span>Bạn đang xem <b>dữ liệu mẫu</b>. Khi sẵn sàng ghi chép thật, hãy xoá chúng đi.</span>
+              <ClearDemoButton />
+            </div>
+          </Alert>
+        </div>
+      )}
       {topAlert && (
         <div style={{ marginBottom: 18 }}>
           <Alert level={topAlert.level}>

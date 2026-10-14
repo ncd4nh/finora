@@ -277,3 +277,23 @@ test('trợ lý: trả lời câu hỏi bằng dữ liệu thật', async () => 
   assert.equal((await ask('chia lương 20tr')).kind, 'advice');
   assert.match((await ask('abc xyz')).text, /chưa hiểu/);
 });
+
+test('xoá dữ liệu mẫu: chỉ xoá dữ liệu mẫu, giữ dữ liệu tự nhập', async () => {
+  const { token } = await auth.register({ name: 'X', email: 'x@example.com', password: 'abc12345', demo: true }, seedDemo);
+  assert.equal((await call(token, 'GET', '/api/settings')).data.has_demo, true);
+  const wallets = (await call(token, 'GET', '/api/wallets')).data;
+  const cat = (await call(token, 'GET', '/api/categories?type=expense')).data[0];
+  const mine = await call(token, 'POST', '/api/transactions', { type: 'expense', amount: 12345, wallet_id: wallets[0].id, category_id: cat.id, note: 'của tôi' });
+  assert.equal(mine.status, 200);
+  const goal = await call(token, 'POST', '/api/savings', { name: 'Mục tiêu thật', target_amount: 1_000_000, target_date: '2099-01-01' });
+
+  const r = await call(token, 'DELETE', '/api/demo-data');
+  assert.equal(r.status, 200); assert.equal(r.data.cleared, true); assert.ok(r.data.transactions > 50);
+  const txs = (await call(token, 'GET', '/api/transactions?limit=1000')).data;
+  assert.deepEqual(txs.map((t) => t.note), ['của tôi']);
+  assert.deepEqual((await call(token, 'GET', '/api/savings')).data.map((g) => g.id), [goal.data.id]);
+  assert.equal((await call(token, 'GET', '/api/jar-periods')).data.length, 0);
+  assert.ok((await call(token, 'GET', '/api/wallets')).data.every((w) => w.initial_balance === 0));
+  assert.equal((await call(token, 'GET', '/api/settings')).data.has_demo, false);
+  assert.equal((await call(token, 'DELETE', '/api/demo-data')).data.cleared, false);
+});

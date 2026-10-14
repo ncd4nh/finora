@@ -13,6 +13,7 @@ import { parseMessage, loadCatalog } from '../services/parser.js';
 import { classify, answerQuery, smallTalk, notUnderstood } from '../services/assistant.js';
 import { aiEnabled, interpret, MODEL } from '../services/ai.js';
 import { advise, buildContext } from '../services/advisor.js';
+import { clearDemo } from '../demoData.js';
 
 const r = Router();
 // Các POST chỉ đọc/tính toán, không làm đổi dữ liệu -> không tăng phiên bản đồng bộ
@@ -41,12 +42,17 @@ const idOf = (v) => Number(v) || 0;
 r.get('/sync', h(() => getSyncState()));
 
 // ---------------- Settings ----------------
-r.get('/settings', h(async () => ({ ...(await getSettings()), ai_enabled: aiEnabled(), ai_model: aiEnabled() ? MODEL() : null })));
+r.get('/settings', h(async () => {
+  const { demo_data, ...s } = await getSettings();
+  return { ...s, has_demo: !!demo_data, ai_enabled: aiEnabled(), ai_model: aiEnabled() ? MODEL() : null };
+}));
 r.put('/settings', h(async (req) => {
   const b = { ...req.body };
   if (b.default_wallet_id) b.default_wallet_id = await ownedId('wallets', b.default_wallet_id);
   return setSettings(b);
 }));
+// Xoá dữ liệu mẫu đã tạo lúc đăng ký (giữ nguyên dữ liệu người dùng tự nhập)
+r.delete('/demo-data', h(() => clearDemo()));
 
 // ---------------- Ví ----------------
 const WALLET_FIELDS = ['name', 'type', 'currency', 'rate_to_base', 'initial_balance', 'aliases', 'color', 'icon', 'include_in_total', 'archived', 'note'];
