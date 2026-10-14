@@ -81,16 +81,12 @@ export async function seedDemo() {
     ['Quỹ khẩn cấp', 2_000_000, addDays(end, -20), null],
     ['Mua ô tô', 30_000_000, addDays(end, -90), 'Số dư ban đầu'],
   ];
-  const balances = [
-    ['Tiền mặt', 6_000_000], ['Techcombank', 15_000_000], ['BIDV', 5_000_000],
-    ['MoMo', 5_000_000], ['Chứng khoán', 30_000_000], ['Crypto (USDT)', 400],
-  ];
   // { id ví: [số dư mẫu, số dư trước đó] } để khi xoá dữ liệu mẫu trả lại số dư cũ
   const oldBalance = Object.fromEntries(wallets.map((r) => [r.id, r.initial_balance]));
-  const demoBalances = Object.fromEntries(balances.filter(([name]) => W[name]).map(([name, v]) => [W[name], [v, oldBalance[W[name]] || 0]]));
+  const demoBalances = Object.fromEntries(DEMO_BALANCES.filter(([name]) => W[name]).map(([name, v]) => [W[name], [v, oldBalance[W[name]] || 0]]));
 
   await batch([
-    ...balances.map(([name, v]) => ['UPDATE wallets SET initial_balance = ? WHERE user_id = @uid AND name = ?', [v, name]]),
+    ...DEMO_BALANCES.map(([name, v]) => ['UPDATE wallets SET initial_balance = ? WHERE user_id = @uid AND name = ?', [v, name]]),
     ...txStmts,
     ...periods.map((p) => [
       'INSERT INTO jar_periods(user_id, start_date, end_date, income_amount) VALUES (@uid, ?, ?, 25000000) ON CONFLICT(user_id, start_date) DO NOTHING',
@@ -128,6 +124,10 @@ export async function seedDemo() {
 }
 
 const DEMO_KEY = 'demo_data';
+const DEMO_BALANCES = [
+  ['Tiền mặt', 6_000_000], ['Techcombank', 15_000_000], ['BIDV', 5_000_000],
+  ['MoMo', 5_000_000], ['Chứng khoán', 30_000_000], ['Crypto (USDT)', 400],
+];
 async function maxIds() {
   const [g, p] = await Promise.all([
     db.prepare('SELECT COALESCE(MAX(id), 0) m FROM savings_goals WHERE user_id = @uid').get(),
@@ -136,21 +136,50 @@ async function maxIds() {
   return { goal: g.m, period: p.m };
 }
 
+// Tài khoản tạo trước khi có đánh dấu: dữ liệu mẫu được ghi ngay lúc đăng ký -> nhận ra theo thời điểm tạo
+const LEGACY_UNTIL = "datetime(?, '+2 minutes')";
+
+/** Thông tin dữ liệu mẫu còn trong tài khoản ({ goals, periods, balances, legacyUntil? }) hoặc null */
+export async function demoInfo() {
+  const row = await db.prepare(`SELECT value FROM settings WHERE user_id = @uid AND key = '${DEMO_KEY}'`).get();
+  if (row) {
+    try { return JSON.parse(row.value || '{}'); } catch { return {}; } // hỏng: vẫn xoá giao dịch mẫu
+  }
+  const u = await db.prepare('SELECT created_at FROM users WHERE id = @uid').get();
+  const since = u?.created_at;
+  if (!since) return null;
+  const hit = await db.prepare(`SELECT 1 FROM transactions WHERE user_id = @uid AND source = 'manual'
+    AND note = 'Lương tháng' AND created_at <= ${LEGACY_UNTIL} LIMIT 1`).get(since);
+  if (!hit) return null;
+  const [goals, periods, wallets] = await Promise.all([
+    db.prepare(`SELECT id FROM savings_goals WHERE user_id = @uid AND created_at <= ${LEGACY_UNTIL}`).all(since),
+    db.prepare(`SELECT id FROM jar_periods WHERE user_id = @uid AND created_at <= ${LEGACY_UNTIL}`).all(since),
+    db.prepare('SELECT id, name FROM wallets WHERE user_id = @uid').all(),
+  ]);
+  const W = Object.fromEntries(wallets.map((w) => [w.name, w.id]));
+  return {
+    legacyUntil: since,
+    goals: goals.map((r) => r.id),
+    periods: periods.map((r) => r.id),
+    balances: Object.fromEntries(DEMO_BALANCES.filter(([name]) => W[name]).map(([name, v]) => [W[name], [v, 0]])),
+  };
+}
+
 /**
  * Xoá dữ liệu mẫu: giao dịch mẫu, mục tiêu tiết kiệm mẫu, kỳ chia hũ mẫu và trả lại số dư ví
  * (nếu người dùng chưa sửa). Dữ liệu người dùng tự nhập được giữ nguyên.
  */
 export async function clearDemo() {
-  const row = await db.prepare(`SELECT value FROM settings WHERE user_id = @uid AND key = '${DEMO_KEY}'`).get();
-  if (!row) return { cleared: false, transactions: 0 };
-  let m = {};
-  try { m = JSON.parse(row.value || '{}'); } catch { /* hỏng: vẫn xoá giao dịch mẫu */ }
+  const m = await demoInfo();
+  if (!m) return { cleared: false, transactions: 0 };
   const ids = (a) => (Array.isArray(a) ? a.map(Number).filter(Boolean) : []);
   const goals = ids(m.goals);
   const periods = ids(m.periods);
   const IN = (a) => `(${a.map(() => '?').join(',')})`;
   const [del] = await batch([
-    ["DELETE FROM transactions WHERE user_id = @uid AND source = 'demo'"],
+    m.legacyUntil
+      ? [`DELETE FROM transactions WHERE user_id = @uid AND source = 'manual' AND created_at <= ${LEGACY_UNTIL}`, [m.legacyUntil]]
+      : ["DELETE FROM transactions WHERE user_id = @uid AND source = 'demo'"],
     goals.length && [`DELETE FROM savings_contributions WHERE user_id = @uid AND goal_id IN ${IN(goals)}`, goals],
     goals.length && [`UPDATE transactions SET savings_goal_id = NULL WHERE user_id = @uid AND savings_goal_id IN ${IN(goals)}`, goals],
     goals.length && [`DELETE FROM savings_goals WHERE user_id = @uid AND id IN ${IN(goals)}`, goals],

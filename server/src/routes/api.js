@@ -13,7 +13,7 @@ import { parseMessage, loadCatalog } from '../services/parser.js';
 import { classify, answerQuery, smallTalk, notUnderstood } from '../services/assistant.js';
 import { aiEnabled, interpret, MODEL } from '../services/ai.js';
 import { advise, buildContext } from '../services/advisor.js';
-import { clearDemo } from '../demoData.js';
+import { clearDemo, demoInfo } from '../demoData.js';
 
 const r = Router();
 // Các POST chỉ đọc/tính toán, không làm đổi dữ liệu -> không tăng phiên bản đồng bộ
@@ -44,7 +44,7 @@ r.get('/sync', h(() => getSyncState()));
 // ---------------- Settings ----------------
 r.get('/settings', h(async () => {
   const { demo_data, ...s } = await getSettings();
-  return { ...s, has_demo: !!demo_data, ai_enabled: aiEnabled(), ai_model: aiEnabled() ? MODEL() : null };
+  return { ...s, has_demo: !!demo_data || !!(await demoInfo()), ai_enabled: aiEnabled(), ai_model: aiEnabled() ? MODEL() : null };
 }));
 r.put('/settings', h(async (req) => {
   const b = { ...req.body };

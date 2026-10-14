@@ -297,3 +297,22 @@ test('xoá dữ liệu mẫu: chỉ xoá dữ liệu mẫu, giữ dữ liệu t�
   assert.equal((await call(token, 'GET', '/api/settings')).data.has_demo, false);
   assert.equal((await call(token, 'DELETE', '/api/demo-data')).data.cleared, false);
 });
+
+test('xoá dữ liệu mẫu ở tài khoản tạo trước khi có đánh dấu', async () => {
+  const { token, user } = await auth.register({ name: 'L', email: 'legacy@example.com', password: 'abc12345', demo: true }, seedDemo);
+  // giả lập dữ liệu cũ: giao dịch mẫu mang source 'manual', không có đánh dấu demo_data
+  await runWithUser(user.id, () => db.prepare("UPDATE transactions SET source = 'manual' WHERE user_id = @uid").run());
+  await runWithUser(user.id, () => db.prepare("DELETE FROM settings WHERE user_id = @uid AND key = 'demo_data'").run());
+  const wallets = (await call(token, 'GET', '/api/wallets')).data;
+  const cat = (await call(token, 'GET', '/api/categories?type=expense')).data[0];
+  await runWithUser(user.id, () => db.prepare(`INSERT INTO transactions(user_id, type, amount, amount_base, wallet_id, category_id, note, date, created_at)
+    VALUES (@uid, 'expense', 5000, 5000, ?, ?, 'sau này', '2026-01-01', datetime('now', '+1 day'))`).run(wallets[0].id, cat.id));
+
+  assert.equal((await call(token, 'GET', '/api/settings')).data.has_demo, true);
+  const r = await call(token, 'DELETE', '/api/demo-data');
+  assert.equal(r.data.cleared, true);
+  assert.deepEqual((await call(token, 'GET', '/api/transactions?limit=1000')).data.map((t) => t.note), ['sau này']);
+  assert.equal((await call(token, 'GET', '/api/savings')).data.length, 0);
+  assert.equal((await call(token, 'GET', '/api/jar-periods')).data.length, 0);
+  assert.equal((await call(token, 'GET', '/api/settings')).data.has_demo, false);
+});
