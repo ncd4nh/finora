@@ -47,8 +47,8 @@ CREATE TABLE IF NOT EXISTS jars (
   user_id     INTEGER NOT NULL,
   name        TEXT NOT NULL,
   code        TEXT,
-  percent     REAL NOT NULL DEFAULT 0,      -- % phần thu nhập còn lại (sau khi trừ các hũ cố định)
-  fixed_amount REAL,                        -- số tiền cố định mỗi kỳ (NULL = chia theo %)
+  percent     REAL NOT NULL DEFAULT 0,      -- % trên tổng số tiền chia (khi chia theo %)
+  fixed_amount REAL,                        -- số tiền vào hũ mỗi kỳ (khi chia theo số tiền; NULL = theo %)
   color       TEXT,
   icon        TEXT,
   description TEXT,
@@ -349,6 +349,7 @@ const DEFAULT_SETTINGS = {
   default_wallet_id: '',
   overspend_tolerance: '0.1', // chi nhanh hơn tiến độ thời gian > 10% -> cảnh báo
   split_amount: '',           // số tiền chia hũ mặc định mỗi kỳ (trống = gợi ý theo thu nhập đã ghi)
+  split_mode: 'pct',          // cách chia hũ: pct = theo %, amount = theo số tiền
 };
 const UPSERT_SETTING = 'INSERT INTO settings(user_id, key, value) VALUES (@uid, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value';
 
@@ -362,6 +363,7 @@ export async function getSettings() {
     overspend_tolerance: Number(s.overspend_tolerance) || 0.1,
     default_wallet_id: s.default_wallet_id ? Number(s.default_wallet_id) : null,
     split_amount: Number(s.split_amount) > 0 ? Number(s.split_amount) : 0,
+    split_mode: s.split_mode === 'amount' ? 'amount' : 'pct',
   };
 }
 

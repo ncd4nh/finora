@@ -247,7 +247,7 @@ export function Money({ v, cur, sign, className = '' }) {
 }
 
 /** Ô nhập tiền: cho phép gõ 100k, 1.5tr ; hiển thị số đã hiểu */
-export function MoneyInput({ value, onChange, placeholder = 'VD: 100k, 1.5tr', autoFocus, currency }) {
+export function MoneyInput({ value, onChange, placeholder = 'VD: 100k, 1.5tr', autoFocus, currency, showHint = true }) {
   const [text, setText] = useState(value ? String(value) : '');
   useEffect(() => {
     if (value === '' || value == null) setText('');
@@ -267,7 +267,7 @@ export function MoneyInput({ value, onChange, placeholder = 'VD: 100k, 1.5tr', a
           onChange(e.target.value);
         }}
       />
-      {text && <div className="faint" style={{ marginTop: 4 }}>= {fmt(parseMoneyLocal(text), currency)}</div>}
+      {showHint && text && <div className="faint" style={{ marginTop: 4 }}>= {fmt(parseMoneyLocal(text), currency)}</div>}
     </div>
   );
 }

@@ -191,35 +191,38 @@ test('giao dịch "không tính vào số dư ví": vẫn hiện + tính báo c�
   assert.equal(await bal(w.id), 4_750_000);
 });
 
-test('hũ cố định nhận đủ số tiền, phần còn lại chia theo %', async () => {
+test('chia hũ theo số tiền hoặc theo % trên tổng số tiền chia', async () => {
   const { token } = await auth.register({ name: 'Fixed', email: 'fixed@example.com', password: 'abc12345' });
   const jars = (await call(token, 'GET', '/api/jars')).data;
   const [house, ...others] = jars;
-  // % của các hũ còn lại không được vượt 100 (không tính hũ cố định)
-  const bad = await call(token, 'PUT', '/api/jars', jars.map((j) => (j.id === house.id ? { ...j, fixed_amount: 4_500_000 } : { ...j, percent: 30 })));
+  // tổng % vượt 100 -> báo lỗi
+  const bad = await call(token, 'PUT', '/api/jars', jars.map((j) => ({ ...j, percent: 30 })));
   assert.equal(bad.status, 400);
-  const each = Math.floor(100 / others.length);
-  const cfg = jars.map((j, i) => (j.id === house.id
-    ? { ...j, fixed_amount: 4_500_000, icon: '🏠' }
-    : { ...j, fixed_amount: null, percent: i === jars.length - 1 ? 100 - each * (others.length - 1) : each }));
+
+  // theo số tiền: mỗi hũ nhận đúng số tiền đã nhập, % tự tính trên tổng
+  const amounts = [4_500_000, 3_000_000, 2_000_000, 1_000_000, 1_000_000, 500_000];
+  const cfg = jars.map((j, i) => ({ ...j, fixed_amount: amounts[i], icon: i === 0 ? '🏠' : j.icon }));
   const saved = await call(token, 'PUT', '/api/jars', cfg);
   assert.equal(saved.status, 200);
   const h0 = saved.data.find((j) => j.id === house.id);
   assert.equal(h0.fixed_amount, 4_500_000); assert.equal(h0.percent, 0); assert.equal(h0.icon, '🏠');
-
+  await call(token, 'PUT', '/api/settings', { split_mode: 'amount' });
+  assert.equal((await call(token, 'GET', '/api/settings')).data.split_mode, 'amount');
   for (const income of [25_000_000, 30_000_000]) {
     const st = (await call(token, 'POST', '/api/jar-periods', { date: income === 25_000_000 ? '2026-01-15' : '2026-02-15', income_amount: income })).data;
-    const h = st.jars.find((j) => j.jar_id === house.id);
-    assert.equal(h.allocated, 4_500_000);
-    assert.equal(st.jars.reduce((s, j) => s + j.allocated, 0), income);
-    const o = st.jars.find((j) => j.jar_id === others[0].id);
-    assert.equal(o.allocated, Math.round(((income - 4_500_000) * each) / 100));
+    assert.equal(st.jars.find((j) => j.jar_id === house.id).allocated, 4_500_000);
+    assert.equal(st.jars.find((j) => j.jar_id === house.id).percent, Math.round((4_500_000 / income) * 10000) / 100);
+    assert.equal(st.unallocated, income - 12_000_000);
   }
-  // tổng hũ cố định vượt số tiền chia -> báo lỗi
-  assert.equal((await call(token, 'POST', '/api/jar-periods', { date: '2026-03-15', income_amount: 3_000_000 })).status, 400);
-  // bỏ cố định -> quay lại chia theo % như cũ
-  const back = await call(token, 'PUT', '/api/jars', jars);
-  assert.equal(back.status, 200); assert.equal(back.data.find((j) => j.id === house.id).fixed_amount, null);
+  // tổng số tiền vượt số tiền chia -> báo lỗi
+  assert.equal((await call(token, 'POST', '/api/jar-periods', { date: '2026-03-15', income_amount: 10_000_000 })).status, 400);
+
+  // theo %: % tính trên tổng số tiền chia
+  const pct = await call(token, 'PUT', '/api/jars', jars.map((j, i) => ({ ...j, fixed_amount: null, percent: i === 0 ? 50 : 10 })));
+  assert.equal(pct.status, 200); assert.equal(pct.data.find((j) => j.id === house.id).fixed_amount, null);
+  const st = (await call(token, 'POST', '/api/jar-periods', { date: '2026-01-15', income_amount: 20_000_000 })).data;
+  assert.equal(st.jars.find((j) => j.jar_id === house.id).allocated, 10_000_000);
+  assert.equal(st.jars.find((j) => j.jar_id === others[0].id).allocated, 2_000_000);
 });
 
 test('chia hũ không đủ 100%, số tiền chia mặc định, xem trước kỳ mới', async () => {
