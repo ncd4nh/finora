@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS jars (
   user_id     INTEGER NOT NULL,
   name        TEXT NOT NULL,
   code        TEXT,
-  percent     REAL NOT NULL DEFAULT 0,
+  percent     REAL NOT NULL DEFAULT 0,      -- % phần thu nhập còn lại (sau khi trừ các hũ cố định)
+  fixed_amount REAL,                        -- số tiền cố định mỗi kỳ (NULL = chia theo %)
   color       TEXT,
   icon        TEXT,
   description TEXT,
@@ -218,6 +219,7 @@ async function connect() {
 }
 const MIGRATIONS = [
   'ALTER TABLE transactions ADD COLUMN exclude_balance INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE jars ADD COLUMN fixed_amount REAL',
 ];
 /** Kết nối + tạo bảng (1 lần cho mỗi tiến trình / lần khởi động serverless) */
 export function init() {

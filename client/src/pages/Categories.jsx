@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 import { fmt } from '../format.js';
-import { Modal, useCatalog, useConfirm, useLoad, useToast } from '../components/ui.jsx';
+import { IconPicker, Modal, useCatalog, useConfirm, useLoad, useToast } from '../components/ui.jsx';
 
 export default function Categories() {
   const { jars, reload: reloadCatalog } = useCatalog();
@@ -98,7 +98,12 @@ function CatModal({ c, jars, onClose, onSaved }) {
     >
       <div className="form-grid">
         <label className="field">Tên<input value={f.name} onChange={(e) => set('name', e.target.value)} autoFocus /></label>
-        <label className="field">Biểu tượng (emoji)<input value={f.icon} onChange={(e) => set('icon', e.target.value)} placeholder="🍜" /></label>
+        <div className="field">Biểu tượng
+          <div className="icon-field">
+            <IconPicker value={f.icon} onChange={(v) => set('icon', v)} placeholder={f.type === 'expense' ? '🛒' : '💰'} label="Chọn biểu tượng khoản" />
+            <span className="faint">Bấm để chọn</span>
+          </div>
+        </div>
         {f.type === 'expense' && (
           <label className="field full">Thuộc hũ
             <select value={f.jar_id} onChange={(e) => set('jar_id', e.target.value)}>

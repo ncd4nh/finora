@@ -236,13 +236,19 @@ function goalKind(start, end) {
 }
 
 // ---------------- Hũ tiền ----------------
-const JAR_FIELDS = ['name', 'code', 'percent', 'color', 'icon', 'description', 'is_saving', 'sort_order', 'archived'];
+const JAR_FIELDS = ['name', 'code', 'percent', 'fixed_amount', 'color', 'icon', 'description', 'is_saving', 'sort_order', 'archived'];
 r.get('/jars', h(() => listJars()));
 r.put('/jars', h(async (req) => {
   // Lưu toàn bộ cấu hình hũ: [{id?, name, percent, ...}] ; tổng % phải = 100
-  const list = Array.isArray(req.body) ? req.body : [];
-  const total = list.filter((j) => !j.archived).reduce((s, j) => s + Number(j.percent || 0), 0);
-  if (Math.abs(total - 100) > 0.01) throw new HttpError(400, `Tổng tỷ lệ các hũ phải bằng 100% (hiện ${round(total, 2)}%)`);
+  // Hũ cố định (fixed_amount > 0) nhận đủ số tiền trước; các hũ còn lại chia phần dư theo %, tổng % phải = 100
+  const list = (Array.isArray(req.body) ? req.body : []).map((j) => {
+    const fixed = Number(j.fixed_amount) > 0 ? Number(j.fixed_amount) : null;
+    return { ...j, fixed_amount: fixed, percent: fixed ? 0 : Number(j.percent) || 0 };
+  });
+  const pctJars = list.filter((j) => !j.archived && !j.fixed_amount);
+  const total = pctJars.reduce((s, j) => s + j.percent, 0);
+  if (pctJars.length && Math.abs(total - 100) > 0.01)
+    throw new HttpError(400, `Tổng tỷ lệ các hũ chia theo % phải bằng 100% (hiện ${round(total, 2)}%)`);
   await batch(list.map((j, i) => {
     const b = { ...pick(j, JAR_FIELDS), sort_order: i };
     return j.id ? [updateSql('jars', b), { ...b, id: idOf(j.id) }] : [insertSql('jars', b), b];

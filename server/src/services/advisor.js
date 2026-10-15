@@ -2,7 +2,7 @@
 import { db } from '../db.js';
 import { normalize, AMOUNT_RE, parseAmountMatch, today, round, fmtVND, daysBetween, addDays, getPeriod } from '../utils.js';
 import { getSettings } from '../db.js';
-import { listJars, findPeriodByDate, periodStatus, currentPeriodRange, incomeInRange, averageSpendByJar } from './jars.js';
+import { listJars, findPeriodByDate, periodStatus, currentPeriodRange, incomeInRange, averageSpendByJar, splitByConfig } from './jars.js';
 import { listGoals } from './finance.js';
 import { aiEnabled, complete, extractJson } from './ai.js';
 
@@ -69,18 +69,20 @@ export async function buildContext(onDate = today()) {
   ]);
   const avgIncome = avgIncomeRow.s;
   const contributedBy = new Map(contribRows.map((r) => [r.goal_id, r.s]));
+  const income = status?.income || incomeNow || lastPeriod?.income_amount || round(avgIncome);
+  const { amounts: cfgAmounts } = splitByConfig(jars, income);
   return {
     date: onDate,
     next_period: nextPeriod,
     period: { start: range.start, end: range.end, total_days: totalDays, days_left: daysLeft, created: !!p },
-    income: status?.income || incomeNow || lastPeriod?.income_amount || round(avgIncome),
+    income,
     jars: jars.map((j) => {
       const s = status?.jars.find((x) => x.jar_id === j.id);
       return {
         jar_id: j.id,
         name: j.name,
         code: j.code,
-        default_percent: j.percent,
+        default_percent: income > 0 ? round((cfgAmounts.get(j.id) / income) * 100, 2) : j.percent,
         is_saving: !!j.is_saving,
         budget: s?.budget ?? null,
         spent: s?.spent ?? 0,

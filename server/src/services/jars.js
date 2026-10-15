@@ -58,17 +58,27 @@ export const upsertPeriod = tx(async (body) => {
   return periodStatus(period.id);
 });
 
-/** Ghi phân bổ cho kỳ. Không truyền allocations -> dùng % mặc định của từng hũ */
+/** Số tiền mỗi hũ nhận theo cấu hình: hũ cố định nhận đủ trước, phần còn lại chia theo % */
+export function splitByConfig(jars, income) {
+  const fixedTotal = jars.reduce((s, j) => s + (j.fixed_amount > 0 ? j.fixed_amount : 0), 0);
+  const rest = Math.max(0, income - fixedTotal);
+  return { fixedTotal, amounts: new Map(jars.map((j) => [j.id, j.fixed_amount > 0 ? j.fixed_amount : (rest * j.percent) / 100])) };
+}
+
+/** Ghi phân bổ cho kỳ. Không truyền allocations -> dùng cấu hình mặc định của từng hũ */
 export async function setAllocations(periodId, income, allocations) {
   const jars = await listJars();
   const byJar = new Map((allocations || []).map((a) => [Number(a.jar_id), a]));
   const UP = `INSERT INTO jar_allocations(user_id, period_id, jar_id, percent, amount) VALUES (@uid,?,?,?,?)
      ON CONFLICT(period_id, jar_id) DO UPDATE SET percent = excluded.percent, amount = excluded.amount`;
   const stmts = [['DELETE FROM jar_allocations WHERE user_id = @uid AND period_id = ?', [periodId]]];
+  const { fixedTotal, amounts } = splitByConfig(jars, income);
+  if (!allocations?.length && fixedTotal > income)
+    throw new HttpError(400, `Tổng các hũ cố định (${fmtVND(fixedTotal)}) lớn hơn số tiền chia (${fmtVND(income)})`);
   for (const j of jars) {
     const a = byJar.get(j.id);
-    let percent = j.percent;
-    let amount = (income * j.percent) / 100;
+    let amount = amounts.get(j.id);
+    let percent = income > 0 ? (amount / income) * 100 : 0;
     if (a) {
       if (a.amount != null && a.amount !== '') {
         amount = Number(a.amount);

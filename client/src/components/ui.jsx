@@ -132,6 +132,70 @@ export function Modal({ title, onClose, children, footer, width }) {
   );
 }
 
+// ---------- Chọn biểu tượng (emoji) cho hũ, khoản thu/chi ----------
+const ICON_GROUPS = [
+  ['Tiền & tiết kiệm', '💰 💵 💳 🏦 🪙 💎 📈 🐷 🫙 🍯 🎯 🛡️ 🧾 💼'],
+  ['Ăn uống', '🍜 🍚 🍔 🍕 🥗 ☕ 🧋 🍺 🛒 🥦 🍎 🍰'],
+  ['Đi lại', '🚗 🛵 🚕 🚌 ✈️ ⛽ 🅿️ 🚲 🚆 🧳'],
+  ['Nhà & hoá đơn', '🏠 💡 💧 📶 📱 🔧 🧹 🛋️ 🧺 🔥'],
+  ['Sức khoẻ & học tập', '💊 🏥 🏋️ 🧘 📚 🎓 ✏️ 💻'],
+  ['Mua sắm & giải trí', '🛍️ 👕 👟 💄 🎮 🎬 🎵 ⚽ 🎉 🏖️'],
+  ['Gia đình & khác', '👨‍👩‍👧 👶 🐶 🐱 🎁 ❤️ 🤝 🙏 🌱 📦 ✨ ⭐'],
+].map(([label, s]) => [label, s.split(' ')]);
+
+/** Nút hiện emoji đang chọn; bấm mở bảng emoji theo nhóm + ô nhập emoji tuỳ ý */
+export function IconPicker({ value, onChange, placeholder = '🙂', label = 'Chọn biểu tượng' }) {
+  const btn = useRef(null);
+  const [pos, setPos] = useState(null);
+  const [custom, setCustom] = useState('');
+  const close = useCallback(() => { setPos(null); setCustom(''); }, []);
+  useEffect(() => {
+    if (!pos) return;
+    // Esc chỉ đóng bảng emoji, không đóng luôn hộp thoại bên ngoài
+    const k = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    const out = (e) => { if (!e.target.closest?.('.icon-pop') && !btn.current?.contains(e.target)) close(); };
+    window.addEventListener('keydown', k, true);
+    document.addEventListener('pointerdown', out, true);
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('keydown', k, true); document.removeEventListener('pointerdown', out, true); window.removeEventListener('resize', close); };
+  }, [pos, close]);
+  function toggle() {
+    if (pos) return close();
+    const b = btn.current.getBoundingClientRect();
+    const w = Math.min(340, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(b.left, window.innerWidth - w - 8));
+    const below = window.innerHeight - b.bottom > 340 || b.top < 340;
+    setPos({ left, width: w, ...(below ? { top: b.bottom + 6 } : { bottom: window.innerHeight - b.top + 6 }) });
+  }
+  const pick = (e) => { onChange(e); close(); };
+  return (
+    <>
+      <button ref={btn} type="button" className="icon-pick" onClick={toggle} aria-label={label} aria-expanded={!!pos} title={label}>
+        <span className={value ? '' : 'faint'}>{value || placeholder}</span>
+      </button>
+      {pos && createPortal(
+        <div className="icon-pop" style={pos} role="dialog" aria-label={label}>
+          {ICON_GROUPS.map(([g, list]) => (
+            <div key={g}>
+              <div className="icon-pop-title">{g}</div>
+              <div className="icon-pop-grid">
+                {list.map((e) => (
+                  <button key={e} type="button" className={value === e ? 'on' : ''} onClick={() => pick(e)} aria-label={e}>{e}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <form className="row icon-pop-custom" onSubmit={(e) => { e.preventDefault(); if (custom.trim()) pick(custom.trim()); }}>
+            <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="Hoặc dán emoji khác…" maxLength={16} aria-label="Emoji tuỳ chọn" />
+            <button type="submit" className="sm" disabled={!custom.trim()}>Dùng</button>
+          </form>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // ---------- Thanh tiến độ (có vạch mốc thời gian) ----------
 export function Progress({ value, max, color = 'var(--accent)', marker, thin, label }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : value > 0 ? 100 : 0;

@@ -191,6 +191,37 @@ test('giao dịch "không tính vào số dư ví": vẫn hiện + tính báo c�
   assert.equal(await bal(w.id), 4_750_000);
 });
 
+test('hũ cố định nhận đủ số tiền, phần còn lại chia theo %', async () => {
+  const { token } = await auth.register({ name: 'Fixed', email: 'fixed@example.com', password: 'abc12345' });
+  const jars = (await call(token, 'GET', '/api/jars')).data;
+  const [house, ...others] = jars;
+  // % của các hũ còn lại phải = 100 (không tính hũ cố định)
+  const bad = await call(token, 'PUT', '/api/jars', jars.map((j) => (j.id === house.id ? { ...j, fixed_amount: 4_500_000 } : j)));
+  assert.equal(bad.status, 400);
+  const each = Math.floor(100 / others.length);
+  const cfg = jars.map((j, i) => (j.id === house.id
+    ? { ...j, fixed_amount: 4_500_000, icon: '🏠' }
+    : { ...j, fixed_amount: null, percent: i === jars.length - 1 ? 100 - each * (others.length - 1) : each }));
+  const saved = await call(token, 'PUT', '/api/jars', cfg);
+  assert.equal(saved.status, 200);
+  const h0 = saved.data.find((j) => j.id === house.id);
+  assert.equal(h0.fixed_amount, 4_500_000); assert.equal(h0.percent, 0); assert.equal(h0.icon, '🏠');
+
+  for (const income of [25_000_000, 30_000_000]) {
+    const st = (await call(token, 'POST', '/api/jar-periods', { date: income === 25_000_000 ? '2026-01-15' : '2026-02-15', income_amount: income })).data;
+    const h = st.jars.find((j) => j.jar_id === house.id);
+    assert.equal(h.allocated, 4_500_000);
+    assert.equal(st.jars.reduce((s, j) => s + j.allocated, 0), income);
+    const o = st.jars.find((j) => j.jar_id === others[0].id);
+    assert.equal(o.allocated, Math.round(((income - 4_500_000) * each) / 100));
+  }
+  // tổng hũ cố định vượt số tiền chia -> báo lỗi
+  assert.equal((await call(token, 'POST', '/api/jar-periods', { date: '2026-03-15', income_amount: 3_000_000 })).status, 400);
+  // bỏ cố định -> quay lại chia theo % như cũ
+  const back = await call(token, 'PUT', '/api/jars', jars);
+  assert.equal(back.status, 200); assert.equal(back.data.find((j) => j.id === house.id).fixed_amount, null);
+});
+
 test('dữ liệu mẫu + toàn bộ màn hình API chạy được', async () => {
   const { token } = await auth.register({ name: 'Demo', email: 'demo2@example.com', password: 'abc12345', demo: true }, seedDemo);
   const dash = await call(token, 'GET', '/api/dashboard');
