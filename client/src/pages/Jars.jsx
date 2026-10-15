@@ -90,7 +90,7 @@ function PeriodView({ st, onChanged }) {
 
   return (
     <>
-      <div className="grid g3 stagger">
+      <div className="grid g3 stagger stat-cards">
         <div className="card">
           <div className="stat-label"><span className="emo-chip" aria-hidden>🗓️</span>Kỳ lương</div>
           <div className="stat-value" style={{ fontSize: 19 }}>{dmy(p.start_date)} → {dmy(p.end_date)}</div>
@@ -100,7 +100,7 @@ function PeriodView({ st, onChanged }) {
         <div className="card">
           <div className="stat-label"><span className="emo-chip" aria-hidden>💵</span>Tiền đã chia</div>
           <div className="stat-value"><CountUp value={st.income} /></div>
-          <div className="row" style={{ marginTop: 8 }}>
+          <div className="row wrap" style={{ marginTop: 8 }}>
             <button className="sm" onClick={() => setEditAlloc(true)}>Sửa phân bổ</button>
             <button className="sm ghost danger" onClick={removePeriod}>Xoá kỳ</button>
           </div>
@@ -141,7 +141,7 @@ function PeriodView({ st, onChanged }) {
               <span className="faint">{j.percent}%</span>
             </div>
             <Progress value={j.spent} max={j.budget} color={j.color} marker={j.is_saving ? null : st.time_percent} label={j.name} />
-            <div className="grid g2" style={{ gap: 8, marginTop: 12, fontSize: 13 }}>
+            <div className="kv">
               <div><div className="faint">Còn lại</div><b className={`num ${j.remaining < 0 ? 'neg' : ''}`}>{fmt(j.remaining)}</b></div>
               {!j.is_saving && <div><div className="faint">Được chi / ngày</div><b className="num">{fmt(j.daily_allowance)}</b></div>}
               {(j.transfer_in > 0 || j.transfer_out > 0) && (

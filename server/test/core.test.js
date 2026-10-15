@@ -167,6 +167,30 @@ test('giao dịch hàng loạt: lỗi 1 dòng -> huỷ cả lô', async () => {
   assert.equal(ok.status, 200); assert.equal(ok.data.created.length, 2);
 });
 
+test('giao dịch "không tính vào số dư ví": vẫn hiện + tính báo cáo, số dư giữ nguyên', async () => {
+  const { token } = await auth.register({ name: 'Opening', email: 'opening@example.com', password: 'abc12345' });
+  const w = (await call(token, 'GET', '/api/wallets')).data[0];
+  const w2 = (await call(token, 'GET', '/api/wallets')).data[1];
+  await call(token, 'PUT', `/api/wallets/${w.id}`, { initial_balance: 5_000_000 });
+  const c = (await call(token, 'GET', '/api/categories?type=expense')).data[0];
+  const before = (await call(token, 'GET', '/api/dashboard')).data.month.expense;
+
+  // khoản chi đã phát sinh trước khi khai báo số dư: chỉ ghi nhận
+  const old = await call(token, 'POST', '/api/transactions', { type: 'expense', amount: 200_000, wallet_id: w.id, category_id: c.id, exclude_balance: true });
+  assert.equal(old.status, 200); assert.equal(old.data.transaction.exclude_balance, 1);
+  await call(token, 'POST', '/api/transactions', { type: 'transfer', amount: 300_000, wallet_id: w.id, to_wallet_id: w2.id, exclude_balance: true });
+  const bal = async (id) => (await call(token, 'GET', '/api/wallets')).data.find((x) => x.id === id).balance;
+  assert.equal(await bal(w.id), 5_000_000);
+  assert.equal(await bal(w2.id), 0);
+  assert.equal((await call(token, 'GET', '/api/dashboard')).data.month.expense, before + 200_000);
+
+  // giao dịch bình thường vẫn trừ vào ví; bỏ đánh dấu thì khoản cũ trừ vào ví
+  await call(token, 'POST', '/api/transactions', { type: 'expense', amount: 50_000, wallet_id: w.id, category_id: c.id });
+  assert.equal(await bal(w.id), 4_950_000);
+  await call(token, 'PUT', `/api/transactions/${old.data.transaction.id}`, { exclude_balance: false });
+  assert.equal(await bal(w.id), 4_750_000);
+});
+
 test('dữ liệu mẫu + toàn bộ màn hình API chạy được', async () => {
   const { token } = await auth.register({ name: 'Demo', email: 'demo2@example.com', password: 'abc12345', demo: true }, seedDemo);
   const dash = await call(token, 'GET', '/api/dashboard');

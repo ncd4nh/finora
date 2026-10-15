@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   date            TEXT NOT NULL,
   source          TEXT NOT NULL DEFAULT 'manual',     -- manual|chat|saving
   client_ref      TEXT,                               -- mã do thiết bị tạo: gửi lại không bị trùng
+  exclude_balance INTEGER NOT NULL DEFAULT 0,         -- 1 = chỉ ghi nhận (đã gồm trong số dư khai báo), không cộng/trừ vào ví
   created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, date);
@@ -210,7 +211,14 @@ async function connect() {
   const mod = url.startsWith('file:') ? await import('@libsql/client') : await import('@libsql/client/web');
   client = mod.createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN || undefined });
   await client.executeMultiple(SCHEMA);
+  // DB tạo từ phiên bản cũ: bổ sung các cột mới (cột đã có thì bỏ qua)
+  for (const sql of MIGRATIONS) {
+    try { await client.execute(sql); } catch (e) { if (!/duplicate column/i.test(e?.message || '')) throw e; }
+  }
 }
+const MIGRATIONS = [
+  'ALTER TABLE transactions ADD COLUMN exclude_balance INTEGER NOT NULL DEFAULT 0',
+];
 /** Kết nối + tạo bảng (1 lần cho mỗi tiến trình / lần khởi động serverless) */
 export function init() {
   if (!ready) ready = connect().catch((e) => { ready = null; client = null; throw e; });

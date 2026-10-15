@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../api.js';
 import { fmt, parseMoney as parseMoneyLocal } from '../format.js';
 
@@ -66,15 +67,59 @@ export function useLoad(fn, deps = []) {
 }
 
 // ---------- Modal ----------
+// Ghi lại vị trí chuột lần bấm gần nhất để hộp thoại mở ngay tại đó
+let lastPointer = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, y: e.clientY, t: Date.now() }; }, true);
+}
+const GAP = 12; // khoảng cách tối thiểu tới mép màn hình
+
 export function Modal({ title, onClose, children, footer, width }) {
+  const ref = useRef(null);
+  // điểm neo cố định từ lúc mở; bấm phím (không dùng chuột) hoặc màn hình nhỏ → căn giữa như cũ
+  const [anchor] = useState(() => {
+    const recent = lastPointer && Date.now() - lastPointer.t < 1500;
+    const sheet = window.matchMedia('(max-width: 760px)').matches;
+    return recent && !sheet ? { x: lastPointer.x, y: lastPointer.y } : null;
+  });
+  const [pos, setPos] = useState(null);
+
   useEffect(() => {
     const k = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
-  return (
+
+  // đặt hộp thoại quanh điểm bấm, kẹp trong khung nhìn; tính lại khi nội dung/cửa sổ đổi kích thước
+  useLayoutEffect(() => {
+    if (!anchor || !ref.current) return;
+    const el = ref.current;
+    const place = () => {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const left = Math.max(GAP, Math.min(anchor.x - w / 2, vw - w - GAP));
+      const top = Math.max(GAP, Math.min(anchor.y - 24, vh - h - GAP));
+      setPos({ left, top, origin: `${anchor.x - left}px ${anchor.y - top}px` });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    window.addEventListener('resize', place);
+    return () => { ro.disconnect(); window.removeEventListener('resize', place); };
+  }, [anchor]);
+
+  const style = {};
+  if (width) style.width = `min(${width}px, 100%)`;
+  if (anchor) {
+    Object.assign(style, { position: 'absolute', margin: 0, maxHeight: `calc(100vh - ${GAP * 2}px)` });
+    if (pos) Object.assign(style, { left: pos.left, top: pos.top, transformOrigin: pos.origin });
+    else style.visibility = 'hidden'; // đo kích thước trước khi hiện, tránh nháy
+  }
+
+  // portal ra <body>: tránh bị "kẹt" trong khối cha có transform/animation (fixed sẽ lệch theo trang)
+  return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={width ? { width: `min(${width}px, 100%)` } : undefined} role="dialog" aria-label={title}>
+      <div ref={ref} className="modal" style={style} role="dialog" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="ghost" onClick={onClose} aria-label="Đóng">✕</button>
@@ -82,7 +127,8 @@ export function Modal({ title, onClose, children, footer, width }) {
         {children}
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

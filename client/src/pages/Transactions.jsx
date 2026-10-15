@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, qs } from '../api.js';
 import { dmy, fmt, todayISO } from '../format.js';
 import { Modal, useCatalog, useConfirm, useLoad, useToast } from '../components/ui.jsx';
@@ -12,8 +12,16 @@ export default function Transactions() {
   const toast = useToast();
   const ask = useConfirm();
   const [flt, setFlt] = useState({ from: monthStart(), to: todayISO(), type: '', wallet_id: '', category_id: '', q: '' });
+  // ô tìm kiếm: chờ ngừng gõ 300ms mới tải lại, tránh gọi API + vẽ lại cả danh sách sau mỗi phím
+  const [q, setQ] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setFlt((s) => (s.q === q ? s : { ...s, q })), 300);
+    return () => clearTimeout(id);
+  }, [q]);
   const [rows, reload] = useLoad(() => api.get('/transactions' + qs({ ...flt, limit: 1000 })), [JSON.stringify(flt)]);
   const [edit, setEdit] = useState(null);
+  const [showFlt, setShowFlt] = useState(false); // điện thoại: ẩn bớt bộ lọc cho gọn
+  const extraFlt = ['type', 'wallet_id', 'category_id'].filter((k) => flt[k]).length + (q ? 1 : 0);
   const set = (k, v) => setFlt((s) => ({ ...s, [k]: v }));
 
   const sum = useMemo(() => {
@@ -44,19 +52,22 @@ export default function Transactions() {
       </div>
 
       <div className="card mt">
-        <div className="row wrap filters" style={{ gap: 8, marginBottom: 12 }}>
+        <div className={`row wrap filters ${showFlt ? 'open' : ''}`} style={{ gap: 8, marginBottom: 12 }}>
           <input type="date" value={flt.from} onChange={(e) => set('from', e.target.value)} style={{ width: 150 }} aria-label="Từ ngày" />
           <input type="date" value={flt.to} onChange={(e) => set('to', e.target.value)} style={{ width: 150 }} aria-label="Đến ngày" />
-          <select value={flt.type} onChange={(e) => set('type', e.target.value)} style={{ width: 130 }} aria-label="Loại">
+          <button type="button" className="sm flt-toggle" onClick={() => setShowFlt((v) => !v)} aria-expanded={showFlt}>
+            {showFlt ? 'Ẩn bộ lọc ▴' : `Lọc thêm${extraFlt ? ` (${extraFlt})` : ''} ▾`}
+          </button>
+          <select className="flt-more" value={flt.type} onChange={(e) => set('type', e.target.value)} style={{ width: 130 }} aria-label="Loại">
             <option value="">Tất cả loại</option><option value="expense">Chi</option><option value="income">Thu</option><option value="transfer">Chuyển ví</option>
           </select>
-          <select value={flt.wallet_id} onChange={(e) => set('wallet_id', e.target.value)} style={{ width: 160 }} aria-label="Ví">
+          <select className="flt-more" value={flt.wallet_id} onChange={(e) => set('wallet_id', e.target.value)} style={{ width: 160 }} aria-label="Ví">
             <option value="">Tất cả ví</option>{wallets.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
-          <select value={flt.category_id} onChange={(e) => set('category_id', e.target.value)} style={{ width: 170 }} aria-label="Khoản">
+          <select className="flt-more" value={flt.category_id} onChange={(e) => set('category_id', e.target.value)} style={{ width: 170 }} aria-label="Khoản">
             <option value="">Tất cả khoản</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.type === 'income' ? '↑' : '↓'} {c.name}</option>)}
           </select>
-          <input value={flt.q} onChange={(e) => set('q', e.target.value)} placeholder="Tìm ghi chú…" style={{ width: 170 }} />
+          <input className="flt-more" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm ghi chú…" style={{ width: 170 }} />
         </div>
         <div className="row wrap" style={{ gap: 16, marginBottom: 8 }}>
           <span>Thu: <b className="num pos">{fmt(sum.income)}</b></span>
@@ -65,7 +76,7 @@ export default function Transactions() {
           <span className="faint">{rows?.length || 0} giao dịch</span>
         </div>
         {byDay.map(([date, list]) => (
-          <div key={date} style={{ marginTop: 10 }}>
+          <div key={date} className="tx-day" style={{ marginTop: 10, containIntrinsicSize: `auto ${34 + list.length * 60}px` }}>
             <div className="faint" style={{ fontWeight: 600, borderBottom: '1px solid var(--border)', paddingBottom: 4 }}>{dmy(date)}</div>
             {list.map((t) => (
               <TxRow key={t.id} t={t} onClick={() => setEdit(t)}

@@ -1,6 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { fmt, short } from '../format.js';
+
+/** Giữ nguyên mảng dữ liệu khi nội dung không đổi: recharts thấy mảng mới là chạy lại animation từ đầu (giật) */
+function useStable(data, map = (x) => x) {
+  const key = JSON.stringify(data);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => map(data), [key]);
+}
 
 /** Đọc màu từ CSS token (tự cập nhật khi đổi sáng/tối) */
 function useTokens(names) {
@@ -51,8 +58,9 @@ export function Legend2() {
 }
 
 /** Thu - chi theo tháng (cột nhóm) */
-export function IncomeExpenseBars({ data, height = 260 }) {
+export function IncomeExpenseBars({ data: raw, height = 260 }) {
   const t = useTokens(['income', 'expense', 'surface-2']);
+  const data = useStable(raw);
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} barGap={2} barCategoryGap="22%" margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
@@ -70,7 +78,7 @@ export function IncomeExpenseBars({ data, height = 260 }) {
 /** Chi tiêu theo ngày (đường) */
 export function DailyLine({ data, height = 220 }) {
   const t = useTokens(['income', 'expense', 'text-3', 'surface']);
-  const d = data.map((x) => ({ ...x, tipLabel: x.date.split('-').reverse().join('/') }));
+  const d = useStable(data, (a) => a.map((x) => ({ ...x, tipLabel: x.date.split('-').reverse().join('/') })));
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={d} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>

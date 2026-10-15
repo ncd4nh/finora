@@ -149,13 +149,14 @@ export function TxRow({ t, onClick, actions }) {
       <div className="grow">
         <div style={{ fontWeight: 550 }}>
           {t.type === 'transfer' ? `${t.wallet_name} → ${t.to_wallet_name}` : t.category_name}
+          {!!t.exclude_balance && <span className="badge tx-only" title="Chỉ ghi nhận: không cộng/trừ vào số dư ví (đã gồm trong số dư khai báo)">Không tính số dư</span>}
         </div>
         <div className="faint" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {dm(t.date)} · {t.type !== 'transfer' && t.wallet_name}{t.jar_name ? ` · ${t.jar_name}` : ''}{t.note ? ` · ${t.note}` : ''}
           {t.source === 'chat' && ' · 💬'}
         </div>
       </div>
-      <div className={`tx-amt ${sign > 0 ? 'pos' : ''}`}>
+      <div className={`tx-amt ${sign > 0 ? 'pos' : ''} ${t.exclude_balance ? 'faint' : ''}`}>
         {sign > 0 ? '+' : sign < 0 ? '−' : ''}{fmt(t.amount, t.wallet_currency)}
       </div>
       {actions}

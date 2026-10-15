@@ -24,7 +24,8 @@ export function SyncProvider({ children }) {
       if (manual) toast('📴 Đang offline: thay đổi sẽ tự đồng bộ khi có mạng');
       return;
     }
-    setSt((s) => ({ ...s, syncing: true, online: true }));
+    // đồng bộ ngầm định kỳ: không bật biểu tượng "đang đồng bộ" để thanh menu khỏi nháy/vẽ lại mỗi 10 giây
+    setSt((s) => (manual ? { ...s, syncing: true, online: true } : s.online ? s : { ...s, online: true }));
     try {
       const sent = await flushOutbox();
       if (sent.sent) toast(`☁️ Đã đồng bộ ${sent.sent} khoản ghi lúc offline`);

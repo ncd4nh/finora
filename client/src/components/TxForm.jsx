@@ -19,6 +19,7 @@ export default function TxForm({ initial, onDone, compact }) {
     date: initial?.date || todayISO(),
     note: initial?.note || '',
     jar_id: initial?.jar_id || '',
+    exclude_balance: !!initial?.exclude_balance,
   }));
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
@@ -42,7 +43,7 @@ export default function TxForm({ initial, onDone, compact }) {
         const label = `${verb} ${fmt(amount, wallet?.currency)}`;
         const r = await sendOrQueue('POST', '/transactions', { ...body, client_ref: rid() }, label);
         if (r.queued) toast(`📴 Đã lưu tạm "${label}" trên máy, sẽ tự đồng bộ khi có mạng`);
-        else toast(`Đã ghi ${label}`);
+        else toast(`Đã ghi ${label}${f.exclude_balance ? ' (không tính vào số dư ví)' : ''}`);
         r.alerts?.forEach((a) => toast(a.message, 'error'));
         setF((s) => ({ ...s, amount: '', note: '' }));
       }
@@ -132,7 +133,11 @@ export default function TxForm({ initial, onDone, compact }) {
           </label>
         )}
       </div>
-      <div className="row" style={{ justifyContent: 'flex-end', marginTop: 14 }}>
+      <div className="tx-submit">
+        <label className="check" title="Dùng cho giao dịch đã phát sinh trước khi khai báo số dư ví: vẫn hiện trong lịch sử và báo cáo thu/chi, nhưng không cộng/trừ vào ví">
+          <input type="checkbox" checked={f.exclude_balance} onChange={(e) => set('exclude_balance', e.target.checked)} />
+          <span>Không tính vào số dư ví<small className="faint">Đã gồm trong số dư lúc khai báo ví</small></span>
+        </label>
         <button className="primary" disabled={busy}>{initial?.id ? 'Lưu thay đổi' : '✓ Xác nhận'}</button>
       </div>
     </form>

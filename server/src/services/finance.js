@@ -23,9 +23,9 @@ export async function listWallets({ includeArchived = false } = {}) {
     .prepare(
       `SELECT w.*,
         w.initial_balance
-        + COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.user_id = @uid AND t.wallet_id = w.id AND t.type = 'income'), 0)
-        - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.user_id = @uid AND t.wallet_id = w.id AND t.type IN ('expense','transfer')), 0)
-        + COALESCE((SELECT SUM(to_amount) FROM transactions t WHERE t.user_id = @uid AND t.to_wallet_id = w.id AND t.type = 'transfer'), 0)
+        + COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.user_id = @uid AND t.wallet_id = w.id AND t.type = 'income' AND t.exclude_balance = 0), 0)
+        - COALESCE((SELECT SUM(amount) FROM transactions t WHERE t.user_id = @uid AND t.wallet_id = w.id AND t.type IN ('expense','transfer') AND t.exclude_balance = 0), 0)
+        + COALESCE((SELECT SUM(to_amount) FROM transactions t WHERE t.user_id = @uid AND t.to_wallet_id = w.id AND t.type = 'transfer' AND t.exclude_balance = 0), 0)
         AS balance
        FROM wallets w
        WHERE w.user_id = @uid ${includeArchived ? '' : 'AND w.archived = 0'}
@@ -49,8 +49,8 @@ export async function netWorth() {
 
 // ---------------- Giao dịch ----------------
 const insTx = () => db.prepare(`INSERT INTO transactions
-  (user_id, type, amount, amount_base, wallet_id, to_wallet_id, to_amount, category_id, jar_id, savings_goal_id, note, date, source, client_ref)
-  VALUES (@uid, @type, @amount, @amount_base, @wallet_id, @to_wallet_id, @to_amount, @category_id, @jar_id, @savings_goal_id, @note, @date, @source, @client_ref)`);
+  (user_id, type, amount, amount_base, wallet_id, to_wallet_id, to_amount, category_id, jar_id, savings_goal_id, note, date, source, client_ref, exclude_balance)
+  VALUES (@uid, @type, @amount, @amount_base, @wallet_id, @to_wallet_id, @to_amount, @category_id, @jar_id, @savings_goal_id, @note, @date, @source, @client_ref, @exclude_balance)`);
 
 /** Chuẩn hoá + kiểm tra 1 giao dịch đầu vào, trả về bản ghi sẵn sàng ghi DB */
 export async function buildTransaction(input) {
@@ -75,6 +75,8 @@ export async function buildTransaction(input) {
     date: input.date || today(),
     source: input.source || 'manual',
     client_ref: input.client_ref ? String(input.client_ref).slice(0, 64) : null,
+    // giao dịch đã phát sinh trước khi khai báo số dư ví: vẫn hiện + tính báo cáo, nhưng không cộng/trừ vào ví
+    exclude_balance: input.exclude_balance === true || input.exclude_balance === 1 || input.exclude_balance === '1' ? 1 : 0,
   };
 
   if (type === 'transfer') {
@@ -118,7 +120,7 @@ export async function updateTransaction(id, input) {
   await db.prepare(
     `UPDATE transactions SET type=@type, amount=@amount, amount_base=@amount_base, wallet_id=@wallet_id,
      to_wallet_id=@to_wallet_id, to_amount=@to_amount, category_id=@category_id, jar_id=@jar_id,
-     savings_goal_id=@savings_goal_id, note=@note, date=@date WHERE user_id=@uid AND id=@id`
+     savings_goal_id=@savings_goal_id, note=@note, date=@date, exclude_balance=@exclude_balance WHERE user_id=@uid AND id=@id`
   ).run({ ...rec, client_ref: undefined, source: undefined, id: old.id });
   return getTransaction(id);
 }

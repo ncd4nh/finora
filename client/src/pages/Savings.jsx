@@ -61,7 +61,7 @@ function GoalCard({ g, onContribute, onEdit, onDetail }) {
         <b>{g.percent}%</b>
       </div>
       <Progress value={g.saved} max={g.target_amount} color="var(--income)" marker={g.time_percent} label={g.name} />
-      <div className="grid g2" style={{ gap: 8, marginTop: 12, fontSize: 13 }}>
+      <div className="kv">
         <div><div className="faint">Cần mỗi tháng</div><b className="num">{fmt(g.required_monthly)}</b></div>
         <div><div className="faint">Còn lại</div><b>{g.months_left} tháng</b> <span className="faint">· {dmy(g.target_date)}</span></div>
         <div><div className="faint">Kế hoạch ban đầu</div><span className="num">{fmt(g.planned_monthly)}/tháng</span></div>

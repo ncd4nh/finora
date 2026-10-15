@@ -29,29 +29,35 @@ export default function Wallets() {
         </div>
       </div>
 
+      {/* các nhóm ví xếp cạnh nhau (nhóm ít ví không chiếm trọn 1 hàng) */}
+      <div className="wallet-groups">
       {groups.map((g) => {
         const sum = g.items.reduce((s, w) => s + w.balance_base, 0);
         return (
-          <div key={g.t} style={{ marginBottom: 20 }}>
+          <div key={g.t} className="wallet-group" style={{ '--n3': Math.min(g.items.length, 3), '--n2': Math.min(g.items.length, 2) }}>
             <div className="row between" style={{ marginBottom: 8 }}>
               <h2>{ICONS[g.t]} {WALLET_TYPES[g.t]}</h2>
               <span className="num muted">{fmt(sum)} · {total ? Math.round((sum / total) * 100) : 0}%</span>
             </div>
-            <div className="grid g3 stagger">
+            <div className="grid stagger wallet-grid">
               {g.items.map((w) => (
                 <div key={w.id} className="card lift" style={{ borderTop: `3px solid ${w.color || 'var(--border)'}` }}>
                   <div className="row between">
                     <b>{w.icon} {w.name}</b>
                     <span className="badge">{w.currency}</span>
                   </div>
-                  <div className="stat-value" style={{ fontSize: 22 }}>{fmt(w.balance, w.currency)}</div>
-                  {w.currency !== 'VND' && (
-                    <div className="faint num">≈ {fmt(w.balance_base)} · tỷ giá {fmt(w.rate_to_base)}</div>
-                  )}
-                  {!w.include_in_total && <div className="faint">Không tính vào tổng tài sản</div>}
-                  <div className="row" style={{ marginTop: 10 }}>
-                    <button className="sm" onClick={() => setEdit(w)}>Sửa</button>
-                    <button className="sm" onClick={() => setAdjust(w)}>Cập nhật số dư</button>
+                  <div className="wallet-main">
+                    <div style={{ minWidth: 0 }}>
+                      <div className="stat-value wallet-balance">{fmt(w.balance, w.currency)}</div>
+                      {w.currency !== 'VND' && (
+                        <div className="faint num">≈ {fmt(w.balance_base)} · tỷ giá {fmt(w.rate_to_base)}</div>
+                      )}
+                      {!w.include_in_total && <div className="faint">Không tính vào tổng tài sản</div>}
+                    </div>
+                    <div className="row wallet-actions">
+                      <button className="sm" onClick={() => setEdit(w)}>Sửa</button>
+                      <button className="sm" onClick={() => setAdjust(w)} title="Cập nhật số dư"><span className="only-d">Cập nhật số dư</span><span className="only-m">Số dư</span></button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -59,6 +65,7 @@ export default function Wallets() {
           </div>
         );
       })}
+      </div>
 
       {edit && <WalletModal w={edit} onClose={() => setEdit(null)} onSaved={reload} />}
       {adjust && <AdjustModal w={adjust} onClose={() => setAdjust(null)} onSaved={reload} />}
@@ -123,6 +130,7 @@ function WalletModal({ w, onClose, onSaved }) {
         )}
         <label className="field">Số dư ban đầu ({f.currency})
           <MoneyInput value={f.initial_balance} onChange={(v) => set('initial_balance', v)} currency={f.currency} />
+          <small className="faint">Nhập số dư hiện có. Khi ghi lại các giao dịch đã phát sinh trước đó, tích "Không tính vào số dư ví" để không bị trừ/cộng 2 lần.</small>
         </label>
         <label className="field">Biểu tượng / màu
           <div className="row"><input value={f.icon} onChange={(e) => set('icon', e.target.value)} placeholder={ICONS[f.type]} style={{ width: 70 }} /><input type="color" value={f.color} onChange={(e) => set('color', e.target.value)} style={{ padding: 2, height: 38 }} /></div>
