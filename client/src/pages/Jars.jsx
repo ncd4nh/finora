@@ -12,13 +12,43 @@ function splitIncome(income, rows) {
   const pctRows = rows.filter((r) => !(r.fixed > 0));
   const pctTotal = pctRows.reduce((s, r) => s + (Number(r.percent) || 0), 0);
   const amounts = Object.fromEntries(rows.map((r) => [r.id, r.fixed > 0 ? r.fixed : (rest * (Number(r.percent) || 0)) / 100]));
-  return { fixedTotal, rest, pctTotal, hasPct: pctRows.length > 0, amounts };
+  // không bắt buộc chia đủ 100%: phần còn lại để ngoài các hũ
+  const unallocated = Math.max(0, income - Object.values(amounts).reduce((a, b) => a + b, 0));
+  return { fixedTotal, rest, pctTotal, hasPct: pctRows.length > 0, amounts, unallocated };
 }
-/** Lỗi chia hũ (nếu có): tổng % phần còn lại phải = 100, tổng cố định không vượt thu nhập */
+/** Lỗi chia hũ (nếu có): tổng % không vượt 100, tổng cố định không vượt số tiền chia */
 function splitError(sp, income) {
   if (income > 0 && sp.fixedTotal > income) return `Tổng các hũ cố định (${fmt(sp.fixedTotal)}) lớn hơn số tiền chia (${fmt(income)})`;
-  if (sp.hasPct && Math.abs(sp.pctTotal - 100) > 0.01) return `Tổng % các hũ chia theo tỷ lệ phải bằng 100% (hiện ${r2(sp.pctTotal)}%)`;
+  if (sp.pctTotal > 100.01) return `Tổng % các hũ chia theo tỷ lệ không được vượt 100% (hiện ${r2(sp.pctTotal)}%)`;
   return null;
+}
+
+/** Xem trước số tiền từng hũ nhận theo cấu hình hiện tại */
+function previewSplit(jars, amt) {
+  const sp = splitIncome(amt, jars.map((j) => ({ id: j.id, fixed: j.fixed_amount, percent: j.percent })));
+  return { sp, err: amt > 0 ? splitError(sp, amt) : null };
+}
+function SplitPreview({ jars, sp, err }) {
+  return (
+    <>
+      <table className="table mt" style={{ maxWidth: 560 }}>
+        <tbody>
+          {jars.map((j) => (
+            <tr key={j.id}>
+              <td><span className="dot" style={{ background: j.color, marginRight: 8 }} />{j.icon} {j.name}</td>
+              <td className="r faint">{j.fixed_amount > 0 ? 'Cố định' : `${j.percent}%`}</td>
+              <td className="r num"><b>{fmt(sp.amounts[j.id])}</b></td>
+            </tr>
+          ))}
+          {sp.unallocated > 0.5 && (
+            <tr><td className="faint">Chưa chia vào hũ</td><td /><td className="r num faint">{fmt(sp.unallocated)}</td></tr>
+          )}
+        </tbody>
+      </table>
+      {sp.fixedTotal > 0 && <p className="faint" style={{ maxWidth: 560 }}>Các hũ cố định nhận đủ {fmt(sp.fixedTotal)} trước, phần còn lại {fmt(sp.rest)} chia cho các hũ theo %.</p>}
+      {err && <p className="neg">{err}</p>}
+    </>
+  );
 }
 
 /** Chọn cách chia cho 1 hũ: % phần còn lại hoặc số tiền cố định */
@@ -44,6 +74,7 @@ export default function Jars() {
   const [sel, setSel] = useState('current');
   const [st, reload] = useLoad(() => api.get(sel === 'current' ? '/jar-periods/current' : `/jar-periods/${sel}`), [sel]);
   const [showConfig, setShowConfig] = useState(false);
+  const [showNew, setShowNew] = useState(false);
   const refresh = () => { reload(); reloadPeriods(); };
 
   return (
@@ -53,16 +84,19 @@ export default function Jars() {
           <h1><span className="emo">🍯</span>Hũ tiền</h1>
           <div className="faint">Chia lương vào các hũ mỗi kỳ (theo % hoặc số tiền cố định), theo dõi tốc độ chi của từng hũ.</div>
         </div>
-        <div className="row">
+        <div className="row jar-head-actions">
           <select value={sel} onChange={(e) => setSel(e.target.value)} style={{ width: 210 }} aria-label="Chọn kỳ">
             <option value="current">Kỳ hiện tại</option>
             {periods?.map((p) => <option key={p.id} value={p.id}>{dmy(p.start_date)} → {dmy(p.end_date)}</option>)}
           </select>
           <button onClick={() => setShowConfig(true)}>⚙️ Cấu hình hũ</button>
+          <button className="primary" onClick={() => setShowNew(true)}>＋ Chia hũ kỳ mới</button>
         </div>
       </div>
       {st && (st.period ? <PeriodView st={st} onChanged={refresh} /> : <SetupPeriod info={st} onDone={refresh} />)}
       {showConfig && <ConfigModal onClose={() => setShowConfig(false)} onSaved={refresh} />}
+      {/* chuyển sang xem kỳ vừa chia; không gọi reload() của kỳ đang xem để tránh dữ liệu cũ về sau ghi đè */}
+      {showNew && <NewPeriodModal onClose={() => setShowNew(false)} onDone={(id) => { if (String(id) === sel) refresh(); else { setSel(String(id)); reloadPeriods(); } }} />}
     </>
   );
 }
@@ -73,8 +107,7 @@ function SetupPeriod({ info, onDone }) {
   const [income, setIncome] = useState(info.suggested.income_amount ? String(info.suggested.income_amount) : '');
   const [start, setStart] = useState(info.suggested.start_date);
   const amt = parseMoney(income);
-  const sp = splitIncome(amt, jars.map((j) => ({ id: j.id, fixed: j.fixed_amount, percent: j.percent })));
-  const err = amt > 0 ? splitError(sp, amt) : null;
+  const { sp, err } = previewSplit(jars, amt);
   async function create() {
     try {
       await api.post('/jar-periods', { start_date: start, income_amount: amt });
@@ -87,24 +120,12 @@ function SetupPeriod({ info, onDone }) {
   return (
     <div className="card">
       <h2>Chia lương kỳ {dmy(info.suggested.start_date)} → {dmy(info.suggested.end_date)}</h2>
-      <p className="muted">Kỳ này chưa được chia hũ. Nhập số tiền lương/thu nhập cần chia (đã gợi ý theo các khoản thu đã ghi trong kỳ).</p>
+      <p className="muted">Kỳ này chưa được chia hũ. Nhập số tiền cần chia (gợi ý theo "Số tiền chia mỗi kỳ" trong Cấu hình hũ, hoặc theo các khoản thu đã ghi trong kỳ).</p>
       <div className="form-grid" style={{ maxWidth: 560 }}>
         <label className="field">Số tiền chia<MoneyInput value={income} onChange={setIncome} autoFocus /></label>
         <label className="field">Ngày bắt đầu kỳ<input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
       </div>
-      <table className="table mt" style={{ maxWidth: 560 }}>
-        <tbody>
-          {jars.map((j) => (
-            <tr key={j.id}>
-              <td><span className="dot" style={{ background: j.color, marginRight: 8 }} />{j.icon} {j.name}</td>
-              <td className="r faint">{j.fixed_amount > 0 ? 'Cố định' : `${j.percent}%`}</td>
-              <td className="r num"><b>{fmt(sp.amounts[j.id])}</b></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {sp.fixedTotal > 0 && <p className="faint" style={{ maxWidth: 560 }}>Các hũ cố định nhận đủ {fmt(sp.fixedTotal)} trước, phần còn lại {fmt(sp.rest)} chia cho các hũ theo %.</p>}
-      {err && <p className="neg">{err}</p>}
+      <SplitPreview jars={jars} sp={sp} err={err} />
       <div className="row mt">
         <button className="primary" disabled={!(amt > 0) || !!err} onClick={create}>Chia vào hũ</button>
         <Link to="/chat" className="faint">hoặc hỏi Chat AI cách chia phù hợp →</Link>
@@ -139,6 +160,7 @@ function PeriodView({ st, onChanged }) {
         <div className="card">
           <div className="stat-label"><span className="emo-chip" aria-hidden>💵</span>Tiền đã chia</div>
           <div className="stat-value"><CountUp value={st.income} /></div>
+          {st.unallocated > 0 && <div className="faint num">Chưa chia vào hũ: {fmt(st.unallocated)}</div>}
           <div className="row wrap" style={{ marginTop: 8 }}>
             <button className="sm" onClick={() => setEditAlloc(true)}>Sửa phân bổ</button>
             <button className="sm ghost danger" onClick={removePeriod}>Xoá kỳ</button>
@@ -292,7 +314,7 @@ function AllocModal({ st, onClose, onSaved }) {
   }
   return (
     <Modal title="Sửa phân bổ kỳ này" onClose={onClose} width={620}
-      footer={<><span className={err ? 'neg' : 'faint'} style={{ marginRight: 'auto', fontSize: 13 }}>{err || `Cố định ${fmt(sp.fixedTotal)} · theo % ${r2(sp.pctTotal)}% của ${fmt(sp.rest)}`}</span><button onClick={onClose}>Huỷ</button><button className="primary" onClick={save}>Lưu</button></>}>
+      footer={<><span className={err ? 'neg' : 'faint'} style={{ marginRight: 'auto', fontSize: 13 }}>{err || `Cố định ${fmt(sp.fixedTotal)} · theo % ${r2(sp.pctTotal)}% của ${fmt(sp.rest)}${sp.unallocated > 0.5 ? ` · chưa chia ${fmt(sp.unallocated)}` : ''}`}</span><button onClick={onClose}>Huỷ</button><button className="primary" onClick={save}>Lưu</button></>}>
       <label className="field">Số tiền chia<MoneyInput value={income} onChange={setIncome} /></label>
       <div className="jar-cfg mt">
         {rows.map((r, i) => (
@@ -304,7 +326,7 @@ function AllocModal({ st, onClose, onSaved }) {
           </div>
         ))}
       </div>
-      <p className="faint">Hũ "Cố định" nhận đủ số tiền trước, phần còn lại chia cho các hũ theo % (tổng 100%).</p>
+      <p className="faint">Hũ "Cố định" nhận đủ số tiền trước, phần còn lại chia cho các hũ theo % (tối đa 100%; phần thiếu để ngoài hũ).</p>
     </Modal>
   );
 }
@@ -314,15 +336,17 @@ function ConfigModal({ onClose, onSaved }) {
   const toast = useToast();
   const [list, setList] = useState([]);
   const [salaryDay, setSalaryDay] = useState(10);
-  const [refIncome, setRefIncome] = useState(0); // thu nhập kỳ hiện tại: để quy đổi % <-> số tiền
+  const [splitAmount, setSplitAmount] = useState(''); // số tiền chia hũ mặc định mỗi kỳ
+  const [curIncome, setCurIncome] = useState(0); // thu nhập kỳ hiện tại (dùng khi chưa nhập số tiền chia)
+  const refIncome = parseMoney(splitAmount) || curIncome; // để quy đổi % <-> số tiền
   useEffect(() => {
     setList(jars.map((j) => ({ ...j, mode: j.fixed_amount > 0 ? 'amount' : 'pct', amount: j.fixed_amount > 0 ? String(j.fixed_amount) : '' })));
-    api.get('/settings').then((s) => setSalaryDay(s.salary_day));
-    api.get('/jar-periods/current').then((st) => setRefIncome(st.period ? st.income : st.suggested?.income_amount || 0)).catch(() => {});
+    api.get('/settings').then((s) => { setSalaryDay(s.salary_day); setSplitAmount(s.split_amount ? String(s.split_amount) : ''); });
+    api.get('/jar-periods/current').then((st) => setCurIncome(st.period ? st.income : st.suggested?.income_amount || 0)).catch(() => {});
   }, [jars]);
   const upd = (i, k, v) => setList((l) => l.map((j, x) => (x === i ? { ...j, [k]: v } : j)));
   const sp = splitIncome(refIncome, list.map((j, i) => ({ id: i, fixed: j.mode === 'amount' ? parseMoney(j.amount) || 0 : null, percent: j.percent })));
-  const pctErr = sp.hasPct && Math.abs(sp.pctTotal - 100) > 0.01;
+  const pctErr = sp.pctTotal > 100.01;
   async function save() {
     const missing = list.find((j) => j.mode === 'amount' && !(parseMoney(j.amount) > 0));
     if (missing) return toast(`Nhập số tiền cố định cho hũ "${missing.name}"`, 'error');
@@ -333,7 +357,7 @@ function ConfigModal({ onClose, onSaved }) {
         fixed_amount: mode === 'amount' ? parseMoney(amount) : null,
         is_saving: j.is_saving ? 1 : 0,
       })));
-      await api.put('/settings', { salary_day: salaryDay });
+      await api.put('/settings', { salary_day: salaryDay, split_amount: parseMoney(splitAmount) || '' });
       toast('Đã lưu cấu hình hũ');
       reload();
       onSaved();
@@ -350,14 +374,21 @@ function ConfigModal({ onClose, onSaved }) {
     <Modal title="Cấu hình hũ tiền" onClose={onClose} width={760}
       footer={<>
         <div className="jar-cfg-sum" style={{ marginRight: 'auto' }}>
-          <span className={pctErr ? 'neg' : 'faint'}>Theo %: {r2(sp.pctTotal)}% {sp.hasPct ? '(phải = 100%)' : ''}</span>
+          <span className={pctErr ? 'neg' : 'faint'}>Theo %: {r2(sp.pctTotal)}% (tối đa 100%)</span>
           {sp.fixedTotal > 0 && <span className={refIncome && sp.fixedTotal > refIncome ? 'neg' : 'faint'}>Cố định: {fmt(sp.fixedTotal)}</span>}
+          {refIncome > 0 && sp.unallocated > 0.5 && <span className="faint">Chưa chia: {fmt(sp.unallocated)}</span>}
         </div>
         <button onClick={onClose}>Huỷ</button><button className="primary" onClick={save}>Lưu</button>
       </>}>
-      <label className="field" style={{ maxWidth: 220, marginBottom: 12 }}>Ngày nhận lương hằng tháng
-        <input type="number" min={1} max={31} value={salaryDay} onChange={(e) => setSalaryDay(e.target.value)} />
-      </label>
+      <div className="form-grid" style={{ marginBottom: 12 }}>
+        <label className="field">Ngày nhận lương hằng tháng
+          <input type="number" min={1} max={31} value={salaryDay} onChange={(e) => setSalaryDay(e.target.value)} />
+        </label>
+        <label className="field">Số tiền chia hũ mỗi kỳ
+          <MoneyInput value={splitAmount} onChange={setSplitAmount} />
+          <small className="faint">Tự điền khi chia hũ kỳ mới. Để trống = gợi ý theo các khoản thu đã ghi.</small>
+        </label>
+      </div>
       <div className="jar-cfg">
         <div className="jar-cfg-row jar-cfg-head"><span>Màu</span><span>Icon</span><span>Tên hũ</span><span>Cách chia</span><span>Tỷ lệ / số tiền</span><span title="Hũ tích luỹ không bị cảnh báo tốc độ chi">Tích luỹ</span></div>
         {list.map((j, i) => (
@@ -376,9 +407,54 @@ function ConfigModal({ onClose, onSaved }) {
       </div>
       <button className="sm mt" onClick={() => setList((l) => [...l, { name: 'Hũ mới', percent: 0, mode: 'pct', amount: '', color: '#4a3aa7', icon: '🫙', is_saving: 0 }])}>+ Thêm hũ</button>
       <p className="faint">
-        Hũ <b>Cố định</b> nhận đủ số tiền mỗi kỳ (kể cả khi thu nhập thay đổi); phần còn lại chia cho các hũ theo <b>%</b> (tổng 100%).
-        {refIncome > 0 && <> Số tiền ước tính theo thu nhập kỳ hiện tại {fmt(refIncome)}.</>} Thay đổi áp dụng cho các kỳ chia mới; kỳ hiện tại sửa ở nút "Sửa phân bổ".
+        Hũ <b>Cố định</b> nhận đủ số tiền mỗi kỳ (kể cả khi thu nhập thay đổi); phần còn lại chia cho các hũ theo <b>%</b> (tối đa 100%, không cần đủ — phần thiếu để ngoài hũ).
+        {refIncome > 0 && <> Số tiền ước tính theo {parseMoney(splitAmount) ? 'số tiền chia mỗi kỳ' : 'thu nhập kỳ hiện tại'} {fmt(refIncome)}.</>} Thay đổi áp dụng cho các kỳ chia mới; kỳ hiện tại sửa ở nút "Sửa phân bổ".
       </p>
+    </Modal>
+  );
+}
+
+/** Chia hũ cho kỳ mới: mặc định kỳ ngay sau kỳ đã chia gần nhất, số tiền theo cấu hình */
+function NewPeriodModal({ onClose, onDone }) {
+  const toast = useToast();
+  const { jars } = useCatalog();
+  const [pv, setPv] = useState(null);
+  const [start, setStart] = useState('');
+  const [income, setIncome] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = (s) => api.get('/jar-periods/preview' + (s ? `?start=${s}` : '')).then((r) => {
+    setPv(r);
+    setStart(r.start_date);
+    setIncome((v) => v || (r.income_amount ? String(r.income_amount) : ''));
+  }).catch((e) => toast(e.message, 'error'));
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const amt = parseMoney(income);
+  const { sp, err } = previewSplit(jars, amt);
+  async function create() {
+    setBusy(true);
+    try {
+      const st = await api.post('/jar-periods', { start_date: start, income_amount: amt });
+      toast(`Đã chia hũ kỳ ${dmy(st.period.start_date)} → ${dmy(st.period.end_date)}`);
+      onDone(st.period.id);
+      onClose();
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal title="Chia hũ kỳ mới" onClose={onClose} width={600}
+      footer={<><button onClick={onClose}>Huỷ</button><button className="primary" disabled={busy || !pv || !(amt > 0) || !!err} onClick={create}>{pv?.existing_id ? 'Chia lại' : 'Chia vào hũ'}</button></>}>
+      <div className="form-grid">
+        <label className="field">Số tiền chia<MoneyInput value={income} onChange={setIncome} autoFocus /></label>
+        <label className="field">Ngày bắt đầu kỳ
+          <input type="date" value={start} onChange={(e) => { setStart(e.target.value); if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) load(e.target.value); }} />
+          {pv && <small className="faint">Kỳ {dmy(pv.start_date)} → {dmy(pv.end_date)}</small>}
+        </label>
+      </div>
+      {pv?.existing_id && <Alert level="warning">Kỳ bắt đầu {dmy(pv.start_date)} đã được chia. Chia lại sẽ thay phân bổ cũ theo cấu hình hiện tại.</Alert>}
+      <SplitPreview jars={jars} sp={sp} err={err} />
     </Modal>
   );
 }

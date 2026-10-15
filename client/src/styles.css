@@ -710,6 +710,10 @@ button.block { width: 100%; justify-content: center; padding: 11px 16px; font-si
   /* bộ lọc giao dịch: ngày luôn hiện, phần còn lại mở khi cần */
   .flt-toggle { display: inline-flex; grid-column: 1 / -1; justify-content: center; }
   .filters:not(.open) .flt-more { display: none; }
+  /* đầu trang Hũ tiền: chọn kỳ 1 hàng, 2 nút chia đều hàng dưới */
+  .jar-head-actions { width: 100%; flex-wrap: wrap; }
+  .jar-head-actions select { flex: 1 1 100%; width: auto !important; }
+  .jar-head-actions button { flex: 1; justify-content: center; }
   /* popup ghi giao dịch: nút Xác nhận luôn nằm ở đáy, không phải cuộn tìm */
   .modal .tx-submit {
     position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom, 0px)); z-index: 1;

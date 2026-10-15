@@ -206,6 +206,8 @@ export async function periodStatus(periodId, onDate = today()) {
     days_left: daysLeft,
     time_percent: round(timeRatio * 100, 1),
     income: p.income_amount,
+    // phần tiền chưa chia vào hũ nào (khi tổng % < 100)
+    unallocated: round(Math.max(0, p.income_amount - jars.reduce((s, j) => s + j.allocated, 0))),
     total_budget: round(totals.budget),
     total_spent: round(totals.spent),
     unassigned_spent: round(unassigned),

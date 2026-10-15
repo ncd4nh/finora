@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { db, batch, getSettings, setSettings, getSyncState, bumpSync } from '../db.js';
-import { today, monthRange, yearRange, addDays, round, pad, fromISO } from '../utils.js';
+import { today, monthRange, yearRange, addDays, round, pad, fromISO, getPeriod } from '../utils.js';
 import {
   HttpError, ownedId, listWallets, getWallet, createTransaction, createTransactions, updateTransaction,
   getTransaction, listTransactions, sumRange, listGoals, goalProgress, contribute,
@@ -245,10 +245,9 @@ r.put('/jars', h(async (req) => {
     const fixed = Number(j.fixed_amount) > 0 ? Number(j.fixed_amount) : null;
     return { ...j, fixed_amount: fixed, percent: fixed ? 0 : Number(j.percent) || 0 };
   });
-  const pctJars = list.filter((j) => !j.archived && !j.fixed_amount);
-  const total = pctJars.reduce((s, j) => s + j.percent, 0);
-  if (pctJars.length && Math.abs(total - 100) > 0.01)
-    throw new HttpError(400, `Tổng tỷ lệ các hũ chia theo % phải bằng 100% (hiện ${round(total, 2)}%)`);
+  // không bắt buộc đủ 100%: phần chưa chia để ngoài các hũ
+  const total = list.filter((j) => !j.archived && !j.fixed_amount).reduce((s, j) => s + j.percent, 0);
+  if (total > 100.01) throw new HttpError(400, `Tổng tỷ lệ các hũ chia theo % không được vượt 100% (hiện ${round(total, 2)}%)`);
   await batch(list.map((j, i) => {
     const b = { ...pick(j, JAR_FIELDS), sort_order: i };
     return j.id ? [updateSql('jars', b), { ...b, id: idOf(j.id) }] : [insertSql('jars', b), b];
@@ -266,8 +265,24 @@ r.get('/jar-periods/current', h(async (req) => {
   const st = await currentStatus(d);
   if (st) return st;
   const range = await currentPeriodRange(d);
-  const [income, jars] = await Promise.all([incomeInRange(range.start, range.end), listJars()]);
-  return { period: null, suggested: { start_date: range.start, end_date: range.end, income_amount: income }, jars };
+  const [income, jars, settings] = await Promise.all([incomeInRange(range.start, range.end), listJars(), getSettings()]);
+  return { period: null, suggested: { start_date: range.start, end_date: range.end, income_amount: settings.split_amount || income }, jars };
+}));
+// Xem trước kỳ chia hũ mới. Không truyền start -> kỳ hiện tại nếu chưa chia, ngược lại kỳ ngay sau kỳ đã chia gần nhất
+r.get('/jar-periods/preview', h(async (req) => {
+  const settings = await getSettings();
+  let start = /^\d{4}-\d{2}-\d{2}$/.test(req.query.start || '') ? req.query.start : null;
+  if (!start) {
+    const cur = await currentPeriodRange(today());
+    const last = await db.prepare('SELECT MAX(end_date) e FROM jar_periods WHERE user_id=@uid').get();
+    start = !cur.period ? cur.start : addDays(last.e > cur.end ? last.e : cur.end, 1);
+  }
+  const end = getPeriod(start, settings.salary_day).end;
+  const [existing, income] = await Promise.all([
+    db.prepare('SELECT id FROM jar_periods WHERE user_id=@uid AND start_date=?').get(start),
+    incomeInRange(start, end),
+  ]);
+  return { start_date: start, end_date: end, income_amount: settings.split_amount || income, existing_id: existing?.id || null };
 }));
 r.get('/jar-periods/:id', h((req) => periodStatus(idOf(req.params.id), req.query.date || today())));
 r.post('/jar-periods', h((req) => upsertPeriod(req.body)));

@@ -246,6 +246,9 @@ export function MoneyInput({ value, onChange, placeholder = 'VD: 100k, 1.5tr', a
   const [text, setText] = useState(value ? String(value) : '');
   useEffect(() => {
     if (value === '' || value == null) setText('');
+    // giá trị được đặt từ bên ngoài (VD tải xong số tiền gợi ý) -> hiện lên ô nhập; đang gõ thì giữ nguyên chữ người dùng
+    else if (parseMoneyLocal(String(value)) !== parseMoneyLocal(text)) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
   return (
     <div>

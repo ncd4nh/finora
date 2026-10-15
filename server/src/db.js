@@ -348,6 +348,7 @@ const DEFAULT_SETTINGS = {
   base_currency: 'VND',
   default_wallet_id: '',
   overspend_tolerance: '0.1', // chi nhanh hơn tiến độ thời gian > 10% -> cảnh báo
+  split_amount: '',           // số tiền chia hũ mặc định mỗi kỳ (trống = gợi ý theo thu nhập đã ghi)
 };
 const UPSERT_SETTING = 'INSERT INTO settings(user_id, key, value) VALUES (@uid, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value';
 
@@ -360,6 +361,7 @@ export async function getSettings() {
     salary_day: Number(s.salary_day) || 10,
     overspend_tolerance: Number(s.overspend_tolerance) || 0.1,
     default_wallet_id: s.default_wallet_id ? Number(s.default_wallet_id) : null,
+    split_amount: Number(s.split_amount) > 0 ? Number(s.split_amount) : 0,
   };
 }
 

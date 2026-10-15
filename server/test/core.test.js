@@ -195,8 +195,8 @@ test('hũ cố định nhận đủ số tiền, phần còn lại chia theo %',
   const { token } = await auth.register({ name: 'Fixed', email: 'fixed@example.com', password: 'abc12345' });
   const jars = (await call(token, 'GET', '/api/jars')).data;
   const [house, ...others] = jars;
-  // % của các hũ còn lại phải = 100 (không tính hũ cố định)
-  const bad = await call(token, 'PUT', '/api/jars', jars.map((j) => (j.id === house.id ? { ...j, fixed_amount: 4_500_000 } : j)));
+  // % của các hũ còn lại không được vượt 100 (không tính hũ cố định)
+  const bad = await call(token, 'PUT', '/api/jars', jars.map((j) => (j.id === house.id ? { ...j, fixed_amount: 4_500_000 } : { ...j, percent: 30 })));
   assert.equal(bad.status, 400);
   const each = Math.floor(100 / others.length);
   const cfg = jars.map((j, i) => (j.id === house.id
@@ -220,6 +220,31 @@ test('hũ cố định nhận đủ số tiền, phần còn lại chia theo %',
   // bỏ cố định -> quay lại chia theo % như cũ
   const back = await call(token, 'PUT', '/api/jars', jars);
   assert.equal(back.status, 200); assert.equal(back.data.find((j) => j.id === house.id).fixed_amount, null);
+});
+
+test('chia hũ không đủ 100%, số tiền chia mặc định, xem trước kỳ mới', async () => {
+  const { token } = await auth.register({ name: 'Partial', email: 'partial@example.com', password: 'abc12345' });
+  const jars = (await call(token, 'GET', '/api/jars')).data;
+  // chỉ chia 80%: phần còn lại để ngoài hũ
+  const cfg = jars.map((j, i) => ({ ...j, percent: i === 0 ? 80 : 0 }));
+  assert.equal((await call(token, 'PUT', '/api/jars', cfg)).status, 200);
+  await call(token, 'PUT', '/api/settings', { split_amount: 20_000_000 });
+  assert.equal((await call(token, 'GET', '/api/settings')).data.split_amount, 20_000_000);
+
+  // chưa chia kỳ nào -> xem trước = kỳ hiện tại, gợi ý số tiền theo cài đặt
+  const p1 = (await call(token, 'GET', '/api/jar-periods/preview')).data;
+  assert.equal(p1.income_amount, 20_000_000); assert.equal(p1.existing_id, null);
+  const st = (await call(token, 'POST', '/api/jar-periods', { start_date: p1.start_date, income_amount: p1.income_amount })).data;
+  assert.equal(st.jars[0].allocated, 16_000_000);
+  assert.equal(st.unallocated, 4_000_000);
+
+  // đã chia kỳ hiện tại -> xem trước = kỳ ngay sau đó
+  const p2 = (await call(token, 'GET', '/api/jar-periods/preview')).data;
+  assert.equal(p2.start_date, (await import('../src/utils.js')).addDays(st.period.end_date, 1));
+  const st2 = (await call(token, 'POST', '/api/jar-periods', { start_date: p2.start_date, income_amount: 25_000_000 })).data;
+  assert.equal(st2.period.start_date, p2.start_date); assert.equal(st2.jars[0].allocated, 20_000_000);
+  // chọn lại ngày của kỳ đã chia -> báo đã tồn tại
+  assert.equal((await call(token, 'GET', `/api/jar-periods/preview?start=${p2.start_date}`)).data.existing_id, st2.period.id);
 });
 
 test('dữ liệu mẫu + toàn bộ màn hình API chạy được', async () => {
