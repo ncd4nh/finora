@@ -247,6 +247,38 @@ test('chia hũ không đủ 100%, số tiền chia mặc định, xem trước k
   assert.equal((await call(token, 'GET', `/api/jar-periods/preview?start=${p2.start_date}`)).data.existing_id, st2.period.id);
 });
 
+test('xoá hũ: giữ kỳ cũ, bỏ phần chia kỳ hiện tại, gỡ khoản chi, tạo lại trùng tên', async () => {
+  const { token } = await auth.register({ name: 'DelJar', email: 'deljar@example.com', password: 'abc12345' });
+  const { addDays } = await import('../src/utils.js');
+  const jars = (await call(token, 'GET', '/api/jars')).data;
+  const gone = jars.find((j) => j.percent === 10);
+  const cat = (await call(token, 'GET', '/api/categories?type=expense')).data[0];
+  await call(token, 'PUT', `/api/categories/${cat.id}`, { jar_id: gone.id });
+  // 1 kỳ đã qua + kỳ hiện tại, đều có chia cho hũ sắp xoá
+  const cur = (await call(token, 'POST', '/api/jar-periods', { income_amount: 10_000_000 })).data;
+  const old = (await call(token, 'POST', '/api/jar-periods', { start_date: addDays(cur.period.start_date, -40), income_amount: 10_000_000 })).data;
+  await call(token, 'POST', '/api/transactions', { type: 'expense', amount: 300_000, wallet_id: (await call(token, 'GET', '/api/wallets')).data[0].id, category_id: cat.id });
+
+  const res = await call(token, 'PUT', '/api/jars', jars.map((j) => (j.id === gone.id ? { ...j, archived: 1 } : j)));
+  assert.equal(res.status, 200);
+  assert.ok(!res.data.some((j) => j.id === gone.id));
+  assert.equal((await call(token, 'GET', `/api/categories?type=expense`)).data.find((c) => c.id === cat.id).jar_id, null);
+  const curAfter = (await call(token, 'GET', `/api/jar-periods/${cur.period.id}`)).data;
+  assert.ok(!curAfter.jars.some((j) => j.jar_id === gone.id));
+  assert.equal(curAfter.unallocated, 1_000_000);
+  assert.equal(curAfter.unassigned_spent, 300_000); // khoản chi đã gắn hũ bị xoá -> tính là chưa gắn hũ
+  const oldAfter = (await call(token, 'GET', `/api/jar-periods/${old.period.id}`)).data;
+  assert.equal(oldAfter.jars.find((j) => j.jar_id === gone.id).allocated, 1_000_000);
+
+  // tạo lại hũ cùng tên -> dùng lại hũ cũ, không lỗi trùng tên
+  const again = await call(token, 'PUT', '/api/jars', [...res.data, { name: gone.name, percent: 0, icon: '🆕' }]);
+  assert.equal(again.status, 200);
+  assert.equal(again.data.find((j) => j.name === gone.name).id, gone.id);
+  // DELETE cũng xoá theo cùng quy tắc
+  assert.equal((await call(token, 'DELETE', `/api/jars/${gone.id}`)).status, 200);
+  assert.ok(!(await call(token, 'GET', '/api/jars')).data.some((j) => j.id === gone.id));
+});
+
 test('dữ liệu mẫu + toàn bộ màn hình API chạy được', async () => {
   const { token } = await auth.register({ name: 'Demo', email: 'demo2@example.com', password: 'abc12345', demo: true }, seedDemo);
   const dash = await call(token, 'GET', '/api/dashboard');

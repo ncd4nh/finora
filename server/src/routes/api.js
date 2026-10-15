@@ -7,7 +7,7 @@ import {
 } from '../services/finance.js';
 import {
   listJars, currentPeriodRange, currentStatus, periodStatus, upsertPeriod, updateAllocations,
-  transferBetweenJars, incomeInRange,
+  transferBetweenJars, incomeInRange, archiveJarStmts,
 } from '../services/jars.js';
 import { parseMessage, loadCatalog } from '../services/parser.js';
 import { classify, answerQuery, smallTalk, notUnderstood } from '../services/assistant.js';
@@ -248,14 +248,20 @@ r.put('/jars', h(async (req) => {
   // không bắt buộc đủ 100%: phần chưa chia để ngoài các hũ
   const total = list.filter((j) => !j.archived && !j.fixed_amount).reduce((s, j) => s + j.percent, 0);
   if (total > 100.01) throw new HttpError(400, `Tổng tỷ lệ các hũ chia theo % không được vượt 100% (hiện ${round(total, 2)}%)`);
-  await batch(list.map((j, i) => {
-    const b = { ...pick(j, JAR_FIELDS), sort_order: i };
-    return j.id ? [updateSql('jars', b), { ...b, id: idOf(j.id) }] : [insertSql('jars', b), b];
-  })).catch((e) => uniqueName(e, 'Tên hũ'));
+  // hũ mới trùng tên hũ đã xoá -> dùng lại hũ cũ (tên là duy nhất)
+  const archivedByName = new Map((await listJars({ includeArchived: true })).filter((j) => j.archived).map((j) => [j.name.trim().toLowerCase(), j.id]));
+  const stmts = [];
+  list.forEach((j, i) => {
+    if (j.id && j.archived) return stmts.push(...archiveJarStmts(idOf(j.id)));
+    const id = j.id ? idOf(j.id) : archivedByName.get(String(j.name || '').trim().toLowerCase());
+    const b = { ...pick(j, JAR_FIELDS), archived: 0, sort_order: i };
+    stmts.push(id ? [updateSql('jars', b), { ...b, id }] : [insertSql('jars', b), b]);
+  });
+  await batch(stmts).catch((e) => uniqueName(e, 'Tên hũ'));
   return listJars();
 }));
 r.delete('/jars/:id', h(async (req) => {
-  await db.prepare('UPDATE jars SET archived=1, percent=0 WHERE user_id=@uid AND id=?').run(idOf(req.params.id));
+  await batch(archiveJarStmts(idOf(req.params.id)));
   return { archived: true };
 }));
 

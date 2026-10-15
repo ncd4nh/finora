@@ -73,6 +73,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', (e) => { lastPointer = { x: e.clientX, y: e.clientY, t: Date.now() }; }, true);
 }
 const GAP = 12; // khoảng cách tối thiểu tới mép màn hình
+const modalStack = []; // hộp thoại đang mở, cái mở sau cùng ở cuối
 
 export function Modal({ title, onClose, children, footer, width }) {
   const ref = useRef(null);
@@ -84,11 +85,15 @@ export function Modal({ title, onClose, children, footer, width }) {
   });
   const [pos, setPos] = useState(null);
 
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
-    const k = (e) => e.key === 'Escape' && onClose();
+    const me = {};
+    modalStack.push(me);
+    const k = (e) => e.key === 'Escape' && modalStack[modalStack.length - 1] === me && closeRef.current();
     window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [onClose]);
+    return () => { window.removeEventListener('keydown', k); modalStack.splice(modalStack.indexOf(me), 1); };
+  }, []);
 
   // đặt hộp thoại quanh điểm bấm, kẹp trong khung nhìn; tính lại khi nội dung/cửa sổ đổi kích thước
   useLayoutEffect(() => {

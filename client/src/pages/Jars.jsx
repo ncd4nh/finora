@@ -332,8 +332,9 @@ function AllocModal({ st, onClose, onSaved }) {
 }
 
 function ConfigModal({ onClose, onSaved }) {
-  const { jars, reload } = useCatalog();
+  const { jars, categories, reload } = useCatalog();
   const toast = useToast();
+  const ask = useConfirm();
   const [list, setList] = useState([]);
   const [salaryDay, setSalaryDay] = useState(10);
   const [splitAmount, setSplitAmount] = useState(''); // số tiền chia hũ mặc định mỗi kỳ
@@ -345,14 +346,28 @@ function ConfigModal({ onClose, onSaved }) {
     api.get('/jar-periods/current').then((st) => setCurIncome(st.period ? st.income : st.suggested?.income_amount || 0)).catch(() => {});
   }, [jars]);
   const upd = (i, k, v) => setList((l) => l.map((j, x) => (x === i ? { ...j, [k]: v } : j)));
-  const sp = splitIncome(refIncome, list.map((j, i) => ({ id: i, fixed: j.mode === 'amount' ? parseMoney(j.amount) || 0 : null, percent: j.percent })));
+  // hũ bị đánh dấu xoá (del) không tính vào tổng; id theo vị trí trong list để khớp với hint()
+  const sp = splitIncome(refIncome, list.map((j, i) => ({ id: i, del: j.del, fixed: j.mode === 'amount' ? parseMoney(j.amount) || 0 : null, percent: j.percent })).filter((r) => !r.del));
   const pctErr = sp.pctTotal > 100.01;
+  const removed = list.filter((j) => j.del);
+  async function remove(i) {
+    const j = list[i];
+    if (!j.id) return setList((l) => l.filter((_, x) => x !== i)); // hũ mới chưa lưu: bỏ luôn
+    const n = categories.filter((c) => c.jar_id === j.id).length;
+    const ok = await ask(
+      `Xoá hũ "${j.name}"? ${n ? `${n} khoản chi đang gắn hũ này sẽ thành "chưa gắn hũ" (gán lại ở Danh mục). ` : ''}` +
+      'Kỳ hiện tại và các kỳ sau bỏ phần chia cho hũ này; các kỳ trước vẫn giữ để xem lại. Áp dụng khi bấm Lưu.',
+      'Xoá hũ'
+    );
+    if (ok) upd(i, 'del', true);
+  }
   async function save() {
-    const missing = list.find((j) => j.mode === 'amount' && !(parseMoney(j.amount) > 0));
+    const missing = list.find((j) => !j.del && j.mode === 'amount' && !(parseMoney(j.amount) > 0));
     if (missing) return toast(`Nhập số tiền cố định cho hũ "${missing.name}"`, 'error');
     try {
-      await api.put('/jars', list.map(({ mode, amount, ...j }) => ({
+      await api.put('/jars', list.map(({ mode, amount, del, ...j }) => ({
         ...j,
+        archived: del ? 1 : 0,
         percent: mode === 'pct' ? Number(j.percent) || 0 : 0,
         fixed_amount: mode === 'amount' ? parseMoney(amount) : null,
         is_saving: j.is_saving ? 1 : 0,
@@ -390,8 +405,8 @@ function ConfigModal({ onClose, onSaved }) {
         </label>
       </div>
       <div className="jar-cfg">
-        <div className="jar-cfg-row jar-cfg-head"><span>Màu</span><span>Icon</span><span>Tên hũ</span><span>Cách chia</span><span>Tỷ lệ / số tiền</span><span title="Hũ tích luỹ không bị cảnh báo tốc độ chi">Tích luỹ</span></div>
-        {list.map((j, i) => (
+        <div className="jar-cfg-row jar-cfg-head"><span>Màu</span><span>Icon</span><span>Tên hũ</span><span>Cách chia</span><span>Tỷ lệ / số tiền</span><span title="Hũ tích luỹ không bị cảnh báo tốc độ chi">Tích luỹ</span><span /></div>
+        {list.map((j, i) => !j.del && (
           <div className="jar-cfg-row" key={j.id || `new-${i}`}>
             <input type="color" value={j.color || '#888888'} onChange={(e) => upd(i, 'color', e.target.value)} aria-label={`Màu hũ ${j.name}`} />
             <IconPicker value={j.icon} onChange={(v) => upd(i, 'icon', v)} placeholder="🫙" label={`Biểu tượng hũ ${j.name}`} />
@@ -402,9 +417,19 @@ function ConfigModal({ onClose, onSaved }) {
               <input type="checkbox" checked={!!j.is_saving} onChange={(e) => upd(i, 'is_saving', e.target.checked)} />
               <span className="only-m">Hũ tích luỹ</span>
             </label>
+            <button type="button" className="ghost sm danger jar-cfg-del" onClick={() => remove(i)} aria-label={`Xoá hũ ${j.name}`} title="Xoá hũ">🗑</button>
           </div>
         ))}
       </div>
+      {removed.length > 0 && (
+        <div className="row wrap faint" style={{ gap: 8, marginTop: 10, fontSize: 13 }}>
+          Sẽ xoá khi lưu: {removed.map((j) => (
+            <span key={j.id} className="badge">{j.icon} {j.name}
+              <button type="button" className="ghost sm" style={{ padding: '0 4px', minHeight: 0 }} onClick={() => setList((l) => l.map((x) => (x === j ? { ...x, del: false } : x)))} aria-label={`Hoàn tác xoá ${j.name}`}>↶</button>
+            </span>
+          ))}
+        </div>
+      )}
       <button className="sm mt" onClick={() => setList((l) => [...l, { name: 'Hũ mới', percent: 0, mode: 'pct', amount: '', color: '#4a3aa7', icon: '🫙', is_saving: 0 }])}>+ Thêm hũ</button>
       <p className="faint">
         Hũ <b>Cố định</b> nhận đủ số tiền mỗi kỳ (kể cả khi thu nhập thay đổi); phần còn lại chia cho các hũ theo <b>%</b> (tối đa 100%, không cần đủ — phần thiếu để ngoài hũ).

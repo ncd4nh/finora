@@ -58,6 +58,19 @@ export const upsertPeriod = tx(async (body) => {
   return periodStatus(period.id);
 });
 
+/**
+ * Câu lệnh xoá (lưu trữ) 1 hũ: giữ lịch sử các kỳ trước; kỳ hiện tại + các kỳ sau bỏ phần chia cho hũ;
+ * khoản chi đang gắn hũ chuyển thành "chưa gắn hũ"
+ */
+export function archiveJarStmts(id) {
+  return [
+    ['UPDATE jars SET archived = 1, percent = 0, fixed_amount = NULL WHERE user_id = @uid AND id = ?', [id]],
+    ['UPDATE categories SET jar_id = NULL WHERE user_id = @uid AND jar_id = ?', [id]],
+    [`DELETE FROM jar_allocations WHERE user_id = @uid AND jar_id = ?
+      AND period_id IN (SELECT id FROM jar_periods WHERE user_id = @uid AND end_date >= ?)`, [id, today()]],
+  ];
+}
+
 /** Số tiền mỗi hũ nhận theo cấu hình: hũ cố định nhận đủ trước, phần còn lại chia theo % */
 export function splitByConfig(jars, income) {
   const fixedTotal = jars.reduce((s, j) => s + (j.fixed_amount > 0 ? j.fixed_amount : 0), 0);
@@ -139,7 +152,7 @@ export async function periodStatus(periodId, onDate = today()) {
     db.prepare(
       `SELECT j.*, COALESCE(a.amount,0) allocated, COALESCE(a.percent,0) alloc_percent
        FROM jars j LEFT JOIN jar_allocations a ON a.jar_id = j.id AND a.period_id = ? AND a.user_id = @uid
-       WHERE j.user_id = @uid AND j.archived = 0 ORDER BY j.sort_order, j.id`
+       WHERE j.user_id = @uid AND (j.archived = 0 OR a.id IS NOT NULL) ORDER BY j.sort_order, j.id`
     ).all(p.id),
     db.prepare(
       `SELECT jar_id, SUM(amount_base) s FROM transactions
@@ -185,7 +198,9 @@ export async function periodStatus(periodId, onDate = today()) {
     };
   });
 
-  const unassigned = spentBy.get(null) || 0;
+  // chi tiêu chưa gắn hũ, hoặc gắn hũ không có trong kỳ (VD hũ đã xoá)
+  const shown = new Set(jars.map((j) => j.jar_id));
+  const unassigned = spentRows.reduce((s, r) => s + (r.jar_id == null || !shown.has(r.jar_id) ? r.s : 0), 0);
   const alerts = buildAlerts(jars, { timeRatio, daysLeft, totalDays });
   if (unassigned > 0)
     alerts.push({
