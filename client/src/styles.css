@@ -371,6 +371,17 @@ label.field, div.field { display: flex; flex-direction: column; gap: 5px; font-s
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast { background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 11px; font-size: 14px; max-width: 360px; box-shadow: 0 8px 24px rgba(0,0,0,.2); animation: toast-in .35s var(--ease) both; }
 .toast.error { background: var(--bad); color: #fff; }
+.toast-link { display: grid; gap: 6px; text-align: left; border: 0; cursor: pointer; font-weight: 400; line-height: 1.4; }
+.toast-link:hover { filter: brightness(1.06); transform: none; }
+.toast-go { font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+/* chi tiết hũ */
+.jar-card { cursor: pointer; }
+.jar-detail-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.jar-detail-kv > div { display: grid; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.jar-detail-kv b { font-size: 17px; }
+.jar-detail-kv small { font-size: 12px; }
+.jar-detail-line { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+@media (max-width: 640px) { .jar-detail-kv { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 860px) { .toasts { bottom: 16px; left: 16px; right: 16px; } .chat { height: calc(100vh - 175px); } }
 
 /* ---------- Charts ---------- */
@@ -777,3 +788,5 @@ button.block { width: 100%; justify-content: center; padding: 11px 16px; font-si
   .salary-row { font-size: 13px; }
 }
 .icon-field { display: flex; align-items: center; gap: 10px; }
+.jar-mini { display: block; color: inherit; text-decoration: none; border-radius: 8px; margin: -4px -6px; padding: 4px 6px; transition: background-color .15s; }
+.jar-mini:hover { background: color-mix(in oklab, var(--surface-2) 55%, transparent); }

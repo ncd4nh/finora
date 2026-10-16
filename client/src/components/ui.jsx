@@ -1,24 +1,32 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { fmt, parseMoney as parseMoneyLocal } from '../format.js';
 
 // ---------- Toast ----------
 const ToastCtx = createContext(() => {});
+/** toast(text, type, { to, action }): có `to` thì bấm vào toast để mở trang đó (VD cảnh báo hũ -> chia lại hũ) */
 export function ToastProvider({ children }) {
+  const navigate = useNavigate();
   const [list, setList] = useState([]);
-  const push = useCallback((text, type = 'info') => {
+  const dismiss = useCallback((id) => setList((l) => l.filter((t) => t.id !== id)), []);
+  const push = useCallback((text, type = 'info', opts = {}) => {
     const id = Math.random();
-    setList((l) => [...l, { id, text, type }]);
-    setTimeout(() => setList((l) => l.filter((t) => t.id !== id)), type === 'error' ? 5000 : 3000);
-  }, []);
+    setList((l) => [...l, { id, text, type, ...opts }]);
+    setTimeout(() => dismiss(id), opts.to ? 9000 : type === 'error' ? 5000 : 3000);
+  }, [dismiss]);
   return (
     <ToastCtx.Provider value={push}>
       {children}
       <div className="toasts" role="status">
-        {list.map((t) => (
+        {list.map((t) => (t.to ? (
+          <button key={t.id} type="button" className={`toast ${t.type} toast-link`} onClick={() => { dismiss(t.id); navigate(t.to); }}>
+            <span>{t.text}</span><span className="toast-go">{t.action || 'Xem'} →</span>
+          </button>
+        ) : (
           <div key={t.id} className={`toast ${t.type}`}>{t.text}</div>
-        ))}
+        )))}
       </div>
     </ToastCtx.Provider>
   );

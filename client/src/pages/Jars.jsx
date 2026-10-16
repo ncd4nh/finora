@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, qs } from '../api.js';
 import { dm, dmy, fmt, parseMoney } from '../format.js';
+import { TxRow } from './Dashboard.jsx';
 import { Alert, CountUp, IconPicker, Modal, MoneyInput, Progress, StatusBadge, useCatalog, useConfirm, useLoad, useToast } from '../components/ui.jsx';
 
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -145,6 +146,10 @@ export default function Jars() {
   const [showConfig, setShowConfig] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const refresh = () => { reload(); reloadPeriods(); };
+  const [params, setParams] = useSearchParams();
+  const focusJar = Number(params.get('jar')) || null;
+  useEffect(() => { if (focusJar && sel !== 'current') setSel('current'); }, [focusJar]); // eslint-disable-line react-hooks/exhaustive-deps
+  const clearFocus = () => setParams({}, { replace: true });
 
   return (
     <>
@@ -162,7 +167,7 @@ export default function Jars() {
           <button className="primary" onClick={() => setShowNew(true)}>＋ Chia hũ kỳ mới</button>
         </div>
       </div>
-      {st && (st.period ? <PeriodView st={st} onChanged={refresh} /> : <SetupPeriod info={st} onDone={refresh} />)}
+      {st && (st.period ? <PeriodView st={st} onChanged={refresh} focusJar={sel === 'current' ? focusJar : null} onFocused={clearFocus} /> : <SetupPeriod info={st} onDone={refresh} />)}
       {showConfig && <ConfigModal onClose={() => setShowConfig(false)} onSaved={() => { if (sel === 'current') refresh(); else { setSel('current'); reloadPeriods(); } }} />}
       {/* chuyển sang xem kỳ vừa chia; không gọi reload() của kỳ đang xem để tránh dữ liệu cũ về sau ghi đè */}
       {showNew && <NewPeriodModal onClose={() => setShowNew(false)} onDone={(id) => { if (String(id) === sel) refresh(); else { setSel(String(id)); reloadPeriods(); } }} />}
@@ -203,12 +208,18 @@ function SetupPeriod({ info, onDone }) {
   );
 }
 
-function PeriodView({ st, onChanged }) {
+function PeriodView({ st, onChanged, focusJar, onFocused }) {
   const toast = useToast();
   const ask = useConfirm();
   const [transfer, setTransfer] = useState(null);
   const [editAlloc, setEditAlloc] = useState(false);
+  const [detail, setDetail] = useState(null); // jar_id đang xem chi tiết
   const p = st.period;
+  useEffect(() => {
+    if (!focusJar) return;
+    if (st.jars.some((j) => j.jar_id === focusJar)) setDetail(focusJar);
+    onFocused();
+  }, [focusJar]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function removePeriod() {
     if (!(await ask('Xoá kỳ chia hũ này? (giao dịch không bị xoá)'))) return;
@@ -261,7 +272,8 @@ function PeriodView({ st, onChanged }) {
 
       <div className="grid g3 mt stagger">
         {st.jars.map((j) => (
-          <div className="card lift" key={j.jar_id} style={{ borderTop: `3px solid ${j.color}` }}>
+          <div className="card lift jar-card" key={j.jar_id} style={{ borderTop: `3px solid ${j.color}` }} role="button" tabIndex={0}
+            onClick={() => setDetail(j.jar_id)} onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && setDetail(j.jar_id)} aria-label={`Chi tiết hũ ${j.name}`}>
             <div className="row between">
               <b>{j.icon} {j.name}</b>
               {j.is_saving ? <span className="badge">Tích luỹ</span> : <StatusBadge status={j.status} />}
@@ -280,9 +292,11 @@ function PeriodView({ st, onChanged }) {
                 </div>
               )}
             </div>
-            <div className="row" style={{ marginTop: 10 }}>
-              <button className="sm" onClick={() => setTransfer({ from_jar_id: '', to_jar_id: j.jar_id, amount: '' })}>Bổ sung</button>
-              <Link to={`/transactions`} className="faint" style={{ fontSize: 13 }}>Giao dịch</Link>
+            <div className="row" style={{ marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+              <button className="sm" onClick={() => setTransfer({ from_jar_id: bestDonor(st, j.jar_id), to_jar_id: j.jar_id, amount: j.remaining < 0 ? String(Math.ceil(-j.remaining)) : '' })}>
+                {j.remaining < 0 ? `Bù ${fmt(-j.remaining)}` : 'Bổ sung'}
+              </button>
+              <button className="sm ghost" onClick={() => setDetail(j.jar_id)}>Chi tiết →</button>
             </div>
           </div>
         ))}
@@ -307,9 +321,73 @@ function PeriodView({ st, onChanged }) {
         </div>
       )}
 
+      {detail && <JarDetailModal st={st} jarId={detail} onClose={() => setDetail(null)} onTransfer={setTransfer} />}
       {transfer && <TransferModal init={transfer} st={st} onClose={() => setTransfer(null)} onSaved={onChanged} />}
       {editAlloc && <AllocModal st={st} onClose={() => setEditAlloc(false)} onSaved={onChanged} />}
     </>
+  );
+}
+
+/** Hũ còn dư nhiều nhất (để gợi ý chuyển sang hũ đang thiếu) */
+function bestDonor(st, jarId) {
+  const sug = st.alerts.find((a) => a.jar_id === jarId)?.suggestion?.from_jar_id;
+  if (sug) return sug;
+  return st.jars.filter((x) => x.jar_id !== jarId && x.remaining > 0).sort((a, b) => b.remaining - a.remaining)[0]?.jar_id || '';
+}
+
+/** Chi tiết 1 hũ trong kỳ: tiền cấu hình, nhận/chuyển, đã chi, còn lại/vượt, giao dịch; chuyển tiền từ hũ khác để bù */
+function JarDetailModal({ st, jarId, onClose, onTransfer }) {
+  const j = st.jars.find((x) => x.jar_id === jarId);
+  const [txs, setTxs] = useState(null);
+  useEffect(() => {
+    api.get('/transactions' + qs({ jar_id: jarId, type: 'expense', from: st.period.start_date, to: st.period.end_date, limit: 500 }))
+      .then(setTxs).catch(() => setTxs([]));
+  }, [jarId, st]);
+  if (!j) return null;
+  const over = Math.max(0, Math.ceil(j.spent - j.budget));
+  const transfers = st.transfers.filter((t) => t.from_jar_id === jarId || t.to_jar_id === jarId);
+  const name = (id) => st.jars.find((x) => x.jar_id === id)?.name || 'hũ đã xoá';
+  const cover = (amount) => onTransfer({ from_jar_id: bestDonor(st, jarId), to_jar_id: jarId, amount: amount ? String(amount) : '' });
+  return (
+    <Modal title={`${j.icon || '🫙'} Hũ ${j.name}`} onClose={onClose} width={640}
+      footer={<><button onClick={onClose}>Đóng</button><button className="primary" onClick={() => cover(over)}>⇄ Chuyển tiền từ hũ khác</button></>}>
+      <div className="row between" style={{ marginBottom: 10 }}>
+        <span className="faint">Kỳ {dmy(st.period.start_date)} → {dmy(st.period.end_date)}</span>
+        {j.is_saving ? <span className="badge">Tích luỹ</span> : <StatusBadge status={j.status} />}
+      </div>
+      {over > 0 && (
+        <Alert level="danger">
+          Hũ đã <b>vượt {fmt(over)}</b> so với ngân sách. Chuyển tiền từ hũ khác để bù phần vượt.
+          <div style={{ marginTop: 8 }}><button className="sm primary" onClick={() => cover(over)}>Chuyển {fmt(over)} từ hũ khác</button></div>
+        </Alert>
+      )}
+      <div className="jar-detail-kv">
+        <div><span className="faint">Cấu hình hũ</span><b className="num">{fmt(j.allocated)}</b><small className="faint">{r2(j.percent)}% số tiền chia</small></div>
+        {(j.transfer_in > 0 || j.transfer_out > 0) && (
+          <div><span className="faint">Chuyển hũ</span><b className="num">{j.transfer_in > 0 ? `+${fmt(j.transfer_in)}` : ''}{j.transfer_in > 0 && j.transfer_out > 0 ? ' ' : ''}{j.transfer_out > 0 ? `−${fmt(j.transfer_out)}` : ''}</b><small className="faint">nhận / chuyển đi</small></div>
+        )}
+        <div><span className="faint">Ngân sách</span><b className="num">{fmt(j.budget)}</b><small className="faint">sau khi chuyển hũ</small></div>
+        <div><span className="faint">Đã chi</span><b className="num">{fmt(j.spent)}</b><small className="faint">{j.budget > 0 ? `${r2((j.spent / j.budget) * 100)}% ngân sách` : '—'}</small></div>
+        <div><span className="faint">{j.remaining < 0 ? 'Vượt' : 'Còn lại'}</span><b className={`num ${j.remaining < 0 ? 'neg' : 'pos'}`}>{fmt(Math.abs(j.remaining))}</b>
+          <small className="faint">{!j.is_saving && st.days_left > 0 ? `${fmt(j.daily_allowance)}/ngày · còn ${st.days_left} ngày` : ''}</small></div>
+      </div>
+      <div className="mt"><Progress value={j.spent} max={j.budget} color={j.color} marker={j.is_saving ? null : st.time_percent} label={j.name} /></div>
+
+      {transfers.length > 0 && (
+        <>
+          <h3 className="mt">Chuyển hũ trong kỳ</h3>
+          {transfers.map((t) => (
+            <div key={t.id} className="row between jar-detail-line">
+              <span>{t.to_jar_id === jarId ? `Nhận từ ${name(t.from_jar_id)}` : `Chuyển sang ${name(t.to_jar_id)}`}{t.note ? <span className="faint"> · {t.note}</span> : ''}</span>
+              <b className={`num ${t.to_jar_id === jarId ? 'pos' : ''}`}>{t.to_jar_id === jarId ? '+' : '−'}{fmt(t.amount)}</b>
+            </div>
+          ))}
+        </>
+      )}
+
+      <h3 className="mt">Giao dịch trong kỳ{txs ? ` (${txs.length})` : ''}</h3>
+      {!txs ? <div className="faint">Đang tải…</div> : !txs.length ? <div className="empty">Chưa có khoản chi nào trong hũ này</div> : txs.map((t) => <TxRow key={t.id} t={t} />)}
+    </Modal>
   );
 }
 
@@ -317,6 +395,9 @@ function TransferModal({ init, st, onClose, onSaved }) {
   const toast = useToast();
   const [f, setF] = useState(init);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const from = st.jars.find((j) => j.jar_id === Number(f.from_jar_id));
+  const to = st.jars.find((j) => j.jar_id === Number(f.to_jar_id));
+  const amount = parseMoney(f.amount);
   async function save() {
     try {
       await api.post(`/jar-periods/${st.period.id}/transfer`, { ...f, amount: parseMoney(f.amount) });
@@ -333,8 +414,9 @@ function TransferModal({ init, st, onClose, onSaved }) {
         <label className="field">Từ hũ
           <select value={f.from_jar_id} onChange={(e) => set('from_jar_id', e.target.value)}>
             <option value="">— Chọn —</option>
-            {st.jars.map((j) => <option key={j.jar_id} value={j.jar_id}>{j.icon} {j.name} (còn {fmt(j.remaining)})</option>)}
+            {st.jars.filter((j) => j.jar_id !== Number(f.to_jar_id)).map((j) => <option key={j.jar_id} value={j.jar_id}>{j.icon} {j.name} (còn {fmt(j.remaining)})</option>)}
           </select>
+          {from && amount > Math.max(0, from.remaining) && <small className="neg">Hũ {from.name} chỉ còn {fmt(Math.max(0, from.remaining))} — chuyển nhiều hơn sẽ làm hũ này thiếu.</small>}
         </label>
         <label className="field">Sang hũ
           <select value={f.to_jar_id} onChange={(e) => set('to_jar_id', e.target.value)}>
@@ -342,8 +424,14 @@ function TransferModal({ init, st, onClose, onSaved }) {
           </select>
         </label>
         <label className="field">Số tiền<MoneyInput value={f.amount} onChange={(v) => set('amount', v)} autoFocus /></label>
-        <label className="field">Ghi chú<input value={f.note || ''} onChange={(e) => set('note', e.target.value)} /></label>
+        <label className="field">Ghi chú<input value={f.note || ''} onChange={(e) => set('note', e.target.value)} placeholder={to && to.remaining < 0 ? `Bù phần vượt hũ ${to.name}` : ''} /></label>
       </div>
+      {to && amount > 0 && (
+        <p className="faint" style={{ marginBottom: 0 }}>
+          Sau khi chuyển: hũ {to.name} còn <b className={`num ${to.remaining + amount < 0 ? 'neg' : ''}`}>{fmt(to.remaining + amount)}</b>
+          {from && <> · hũ {from.name} còn <b className={`num ${from.remaining - amount < 0 ? 'neg' : ''}`}>{fmt(from.remaining - amount)}</b></>}
+        </p>
+      )}
     </Modal>
   );
 }

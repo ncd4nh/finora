@@ -44,7 +44,7 @@ export default function Dashboard() {
       {topAlert && (
         <div style={{ marginBottom: 18 }}>
           <Alert level={topAlert.level}>
-            {topAlert.message} <Link to="/jars">Xem hũ tiền →</Link>
+            {topAlert.message} <Link to={topAlert.jar_id ? `/jars?jar=${topAlert.jar_id}` : '/jars'}>{topAlert.jar_id ? 'Chia lại hũ →' : 'Xem hũ tiền →'}</Link>
           </Alert>
         </div>
       )}
@@ -105,7 +105,7 @@ export default function Dashboard() {
           {js ? (
             <div className="grid" style={{ gap: 12 }}>
               {js.jars.map((j) => (
-                <div key={j.jar_id}>
+                <Link key={j.jar_id} to={`/jars?jar=${j.jar_id}`} className="jar-mini" aria-label={`Chi tiết hũ ${j.name}`}>
                   <div className="row between" style={{ marginBottom: 5, fontSize: 14 }}>
                     <span className="row" style={{ gap: 7 }}><span className="dot" style={{ background: j.color }} />{j.name}</span>
                     <span className="row" style={{ gap: 6 }}>
@@ -114,7 +114,7 @@ export default function Dashboard() {
                     </span>
                   </div>
                   <Progress value={j.spent} max={j.budget} color={j.color} marker={j.is_saving ? null : js.time_percent} thin label={j.name} />
-                </div>
+                </Link>
               ))}
             </div>
           ) : (

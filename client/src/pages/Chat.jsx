@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { api, rid, sendOrQueue } from '../api.js';
 import { fmt, parseMoney, todayISO } from '../format.js';
+import { Link } from 'react-router-dom';
 import { Alert, useCatalog } from '../components/ui.jsx';
 
 const KEY = 'finance-chat-v1';
@@ -181,7 +182,7 @@ function TxProposal({ m, onPatch, onDone }) {
         </div>
       )}
       {err && <div className="neg" style={{ marginTop: 6 }}>{err}</div>}
-      {m.alerts?.map((a, i) => <div key={i} style={{ marginTop: 8 }}><Alert level={a.level}>{a.message}</Alert></div>)}
+      {m.alerts?.map((a, i) => <div key={i} style={{ marginTop: 8 }}><Alert level={a.level}>{a.message}{a.jar_id && <> <Link to={`/jars?jar=${a.jar_id}`}>Chia lại hũ →</Link></>}</Alert></div>)}
     </div>
   );
 }

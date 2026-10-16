@@ -44,7 +44,8 @@ export default function TxForm({ initial, onDone, compact }) {
         const r = await sendOrQueue('POST', '/transactions', { ...body, client_ref: rid() }, label);
         if (r.queued) toast(`📴 Đã lưu tạm "${label}" trên máy, sẽ tự đồng bộ khi có mạng`);
         else toast(`Đã ghi ${label}${f.exclude_balance ? ' (không tính vào số dư ví)' : ''}`);
-        r.alerts?.forEach((a) => toast(a.message, 'error'));
+        // cảnh báo hũ: bấm để mở chi tiết hũ và chuyển tiền từ hũ khác sang bù
+        r.alerts?.forEach((a) => toast(a.message, 'error', a.jar_id ? { to: `/jars?jar=${a.jar_id}`, action: 'Chia lại hũ' } : {}));
         setF((s) => ({ ...s, amount: '', note: '' }));
       }
       reload();
